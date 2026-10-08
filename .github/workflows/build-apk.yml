@@ -26,9 +26,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -50,4 +47,3 @@ jobs:
           path: |
             WatchParty-FirstPage.apk
             SHA256SUMS.txt
-            
