@@ -23,6 +23,12 @@ object WpUser {
         return "Me"
     }
 
+    /** Jo naam user ne khud likha hai — "" agar abhi default ("Me") hai. */
+    fun savedName(ctx: Context): String {
+        val n = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(K_NAME, null)
+        return if (n.isNullOrBlank() || n == "Me") "" else n
+    }
+
     fun setName(ctx: Context, name: String) {
         val n = name.trim()
         if (n.isBlank()) return

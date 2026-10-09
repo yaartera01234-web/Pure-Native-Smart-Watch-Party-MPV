@@ -218,18 +218,32 @@ class MainActivity : Activity() {
         // Name
         nameInput = styledEdit("Apna name likho...", 20, 17f)
         card.addView(nameInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+        // Chhota hint: yahi naam doston ki chat mein dikhega
+        card.addView(TextView(this).apply {
+            text = "Ye naam chat mein doston ko dikhega"
+            textSize = 11f
+            setTextColor(Color.argb(160, 255, 255, 255))
+        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(4)
+        })
 
         // Room
         roomInput = styledEdit("Room name... (doston se poocho!)", 20, 16f)
         card.addView(roomInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
 
         // Restore saved name/room (watchers se pehle)
-        nameInput.setText(prefs.getString("name", "") ?: "")
+        val savedName = prefs.getString("name", "") ?: ""
+        nameInput.setText(if (savedName.isNotBlank()) savedName else WpUser.savedName(this))
         roomInput.setText(prefs.getString("room", "") ?: "")
         nameInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) { renderAvatar(); savePrefs() }
+            override fun afterTextChanged(s: android.text.Editable?) {
+                renderAvatar(); savePrefs()
+                // Chat wali pehchaan bhi yahi naam -> Inbox/Chat isi se chatId banate hain
+                val n = s?.toString()?.trim().orEmpty()
+                if (n.isNotBlank()) WpUser.setName(this@MainActivity, n)
+            }
         })
         roomInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -264,6 +278,9 @@ class MainActivity : Activity() {
                 if (n.isEmpty() || r.isEmpty()) {
                     Toast.makeText(this@MainActivity, "Naam aur room name likho", Toast.LENGTH_SHORT).show()
                 } else {
+                    // Yahi naam chat ki pehchaan hai (doston ko bhi yahi dikhega)
+                    WpUser.setName(this@MainActivity, n)
+                    FirebaseChat.setPresence(this, n, true)
                     // Join ke baad next page: Messages (Inbox)
                     startActivity(Intent(this@MainActivity, InboxActivity::class.java))
                 }
