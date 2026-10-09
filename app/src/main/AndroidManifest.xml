@@ -35,6 +35,10 @@
             android:name=".CallsActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".PartyLobbyActivity"
+            android:exported="false"
+            android:screenOrientation="unspecified" />
         <!-- Push notification (FCM) + notification se seedha jawab -->
         <service
             android:name=".WpMessagingService"

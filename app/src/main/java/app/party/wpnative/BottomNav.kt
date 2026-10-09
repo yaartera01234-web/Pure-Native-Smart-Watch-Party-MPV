@@ -19,7 +19,6 @@ import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 
 /**
  * Neeche ka nav = website #yp-bar ka copy. Messages aur Calls dono isi ko use karte hain.
@@ -89,9 +88,9 @@ fun buildBottomNav(act: Activity, active: String): View {
             setOnClickListener {
                 if (on) return@setOnClickListener
                 when (key) {
+                    "party" -> open(PartyLobbyActivity::class.java)
                     "chat" -> open(InboxActivity::class.java)
                     "call" -> open(CallsActivity::class.java)
-                    else -> Toast.makeText(act, "Party agle step mein", Toast.LENGTH_SHORT).show()
                 }
             }
         }
