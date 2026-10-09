@@ -68,7 +68,6 @@ class InboxActivity : Activity() {
         super.onResume()
         // Chat screen se koi friend remove hua ho to list turant saaf ho jaye
         if (::listBox.isInitialized) fillInbox()
-        WpTest.armFakeIncoming(this)   // TEST: 30s baad "Dost 1" khud msg bhejega
     }
 
     private fun buildScreen(): View {
