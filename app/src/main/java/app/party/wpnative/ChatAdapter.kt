@@ -47,6 +47,9 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
     /** Abhi screen par maujood lines (pagination mein purani jagah pakadne ke kaam aati hai). */
     val list: List<Row> get() = rows
 
+    /** Is message ko "naya aaya" wala animation milega (Instagram jaisa) — ek hi baar. */
+    var entryAnimId: Int = -1
+
     private companion object {
         const val T_MINE = 0
         const val T_PEER = 1
@@ -88,7 +91,11 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
 
     override fun onBindViewHolder(h: RecyclerView.ViewHolder, pos: Int) {
         when (h) {
-            is MsgVH -> rows[pos].msg?.let { h.bind(it) }
+            is MsgVH -> rows[pos].msg?.let { m ->
+                val anim = (m.id == entryAnimId)
+                if (anim) entryAnimId = -1
+                h.bind(m, anim)
+            }
             is DayVH -> h.bind(rows[pos].day ?: "")
         }
     }
@@ -278,10 +285,13 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             setColor(host.peerColorInt())
         }
 
-        fun bind(m: Msg) {
+        fun bind(m: Msg, animate: Boolean = false) {
             bound = m
             // recycle hui line purani swipe/animation ki halat na Rakhe
+            row.animate().cancel()
             row.translationX = 0f
+            row.alpha = 1f
+            row.translationY = 0f
             handle.alpha = 0f
             handle.scaleX = 0.7f
             handle.scaleY = 0.7f
@@ -311,6 +321,20 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             textTv.requestLayout()
             bubble.requestLayout()
             row.requestLayout()
+
+            /* Instagram wala entry animation: naya message thoda sa neeche se
+               upar aata hai (180ms). RecyclerView ki animation nahi — apna khud ka,
+               is liye naap (size) kabhi ghalat nahi hoti. */
+            if (animate) {
+                row.alpha = 0f
+                row.translationY = host.dp(7).toFloat()
+                row.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(180L)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+            }
         }
 
         private fun rebuildChips(m: Msg) {

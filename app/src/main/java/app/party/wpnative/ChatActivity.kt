@@ -347,6 +347,8 @@ class ChatActivity : Activity(), ChatHost {
      * 100 messages hon ya 5,000 — scrolling ek jaisi rahegi.
      */
     private fun renderThread() {
+        ad.entryAnimId = animId      // ye naya message animation ke sath aayega
+        animId = -1
         ad.submit(buildRows())
     }
 
@@ -685,6 +687,7 @@ class ChatActivity : Activity(), ChatHost {
             val before = msgs.size
             mergeIncoming(list.filterNot { it.deleted }, prepend = false)
             val added = msgs.size > before
+            if (added) animId = msgs.lastOrNull()?.id ?: -1   // aaya hua message bhi aise hi aaye
             if (removed || added) {
                 saveCache()
                 renderThread()
