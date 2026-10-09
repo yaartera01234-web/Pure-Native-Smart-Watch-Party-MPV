@@ -43,6 +43,7 @@ class InboxActivity : Activity() {
     )
 
     private lateinit var listBox: LinearLayout
+    private lateinit var myNameText: TextView
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
     private fun hex(s: String): Int = Color.parseColor(s)
@@ -106,14 +107,24 @@ class InboxActivity : Activity() {
             setPadding(dp(12), dp(12), dp(12), dp(12))
             background = roundBox(Color.argb(8, 255, 255, 255), Color.argb(15, 255, 255, 255), 0, 1)
         }
-        bar.addView(TextView(this).apply {
+        val titleCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        titleCol.addView(TextView(this).apply {
             text = "💬 Messages"
             textSize = 16f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(Color.WHITE)
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        })
+        myNameText = TextView(this).apply {
+            text = "Tum: ${WpUser.me(this@InboxActivity)}"
+            textSize = 10f
+            setTextColor(hex("#a291c6"))
+        }
+        titleCol.addView(myNameText)
+        bar.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        bar.addView(squareBtn("👤+", gradient = true), lp(dp(40), dp(40)).apply { leftMargin = dp(6) })
+        val addBtn = squareBtn("👤+", gradient = true)
+        addBtn.setOnClickListener { addFriend() }
+        bar.addView(addBtn, lp(dp(40), dp(40)).apply { leftMargin = dp(6) })
         val menuBtn = squareBtn("☰", gradient = true)
         menuBtn.setOnClickListener { showChatMenu(menuBtn) }
         bar.addView(menuBtn, lp(dp(40), dp(40)).apply { leftMargin = dp(6) })
@@ -248,8 +259,30 @@ class InboxActivity : Activity() {
                     Toast.makeText(this, "Chat clear (demo)", Toast.LENGTH_SHORT).show()
                 }
             },
+            "✏️  Apna naam badlo" to { askMyName() },
             "👤  Remove Friend" to { showRemoveSheet() }
         ))
+    }
+
+    /** Apna naam — doosre phone par yahi dikhayi dega (chatId isi se banti hai). */
+    private fun askMyName() {
+        askTextDialog(this, "Apna naam", "Doston ko yahi naam dikhega", WpUser.me(this)) { n ->
+            if (n.isBlank()) return@askTextDialog
+            WpUser.setName(this, n)
+            myNameText.text = "Tum: $n"
+            fillInbox()
+            Toast.makeText(this, "Naam ho gaya: $n", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 👤+ : naya dost jodo (dono phone par ek hi naam likhna hoga). */
+    private fun addFriend() {
+        askTextDialog(this, "Naya dost jodo", "Dost ka naam", "") { n ->
+            if (n.isBlank()) return@askTextDialog
+            Friends.add(this, n)
+            fillInbox()
+            Toast.makeText(this, "$n jod diya", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** Upar wale ☰ se: pehle poochhna kaunsa dost hatana hai (poorani list). */

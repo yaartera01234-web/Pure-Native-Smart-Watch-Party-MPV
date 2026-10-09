@@ -1,0 +1,43 @@
+rules_version = '2';
+
+// Smart Watch Party — Firestore ke niyam.
+// Firebase console -> Build -> Firestore Database -> Rules -> paste kar ke Publish.
+//
+// NOTE: abhi Firebase Auth nahi hai, is liye "kaun hai" check nahi ho sakta.
+// Is liye sirf itna control hai: sirf wahi 3 jagah (msgs / users / typing)
+// likhne ki ijazat, aur data ki shape theek honi chahiye.
+// Auth aane ke baad har chat par "sirf dono parties" wala check laga denge.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1) Messages: chats/{chatId}/msgs/{msgId}
+    match /chats/{chatId}/msgs/{msgId} {
+      allow read: if true;
+      allow create: if isValidMsg(request.resource.data);
+      allow update: if isValidMsg(request.resource.data);
+      allow delete: if true;
+    }
+
+    // 2) Presence: users/{naam} = { online, seenAt }
+    match /users/{name} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasOnly(['online', 'seenAt'])
+                   && request.resource.data.online is bool;
+    }
+
+    // 3) Typing: typing/{chatId} = { who, ts }
+    match /typing/{chatId} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasOnly(['who', 'ts']);
+    }
+
+    // Message ki shape theek hai?
+    function isValidMsg(d) {
+      return d.keys().hasAll(['from', 'text', 'ts'])
+        && d['from'] is string && d['from'].size() <= 40
+        && d['text'] is string && d['text'].size() <= 4000
+        && d['ts'] is number;
+    }
+  }
+}

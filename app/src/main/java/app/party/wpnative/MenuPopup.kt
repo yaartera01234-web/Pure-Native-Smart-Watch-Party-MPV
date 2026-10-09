@@ -10,6 +10,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupWindow
@@ -58,6 +59,80 @@ fun confirmThen(ctx: Context, title: String, msg: String, action: () -> Unit) {
         .setPositiveButton("Haan, clear karo") { _, _ -> action() }
         .setNegativeButton("Nahi", null)
         .show()
+}
+
+/** Naam poochhne ka dialog (apna naam badlo / naya dost jodo). */
+fun askTextDialog(ctx: Context, title: String, hint: String, current: String, onOk: (String) -> Unit) {
+    val d = ctx.resources.displayMetrics.density
+    fun dp(v: Int): Int = (v * d).toInt()
+
+    val panel = LinearLayout(ctx).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(24), dp(20), dp(24), dp(18))
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor("#21132f"))
+            cornerRadius = dp(22).toFloat()
+            setStroke(dp(1), Color.parseColor("#6f4686"))
+        }
+    }
+    panel.addView(TextView(ctx).apply {
+        text = title
+        textSize = 16f
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        setTextColor(Color.WHITE)
+    })
+
+    val input = EditText(ctx).apply {
+        setText(current)
+        setSelection(current.length)
+        hint = hint
+        setHintTextColor(Color.parseColor("#8b7fb0"))
+        setTextColor(Color.WHITE)
+        textSize = 14f
+        setSingleLine(true)
+        setPadding(dp(12), dp(11), dp(12), dp(11))
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor("#150f26"))
+            cornerRadius = dp(12).toFloat()
+            setStroke(dp(1), Color.parseColor("#85619a"))
+        }
+    }
+    panel.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        topMargin = dp(14); bottomMargin = dp(16)
+    })
+
+    val dlg = Dialog(ctx).apply { requestWindowFeature(Window.FEATURE_NO_TITLE) }
+    fun btn(label: String, bg: String, fn: () -> Unit) = TextView(ctx).apply {
+        text = label
+        textSize = 13f
+        gravity = Gravity.CENTER
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        setTextColor(Color.WHITE)
+        setPadding(dp(8), dp(12), dp(8), dp(12))
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor(bg))
+            cornerRadius = dp(12).toFloat()
+            setStroke(dp(1), Color.parseColor("#85619a"))
+        }
+        setOnClickListener { fn() }
+    }
+    val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+    row.addView(btn("Cancel", "#342040") { dlg.dismiss() },
+        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    row.addView(btn("Save", "#a855f7") { dlg.dismiss(); onOk(input.text.toString().trim()) },
+        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
+    panel.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+    val wrap = FrameLayout(ctx).apply {
+        setPadding(dp(24), dp(24), dp(24), dp(24))
+        addView(panel)
+    }
+    dlg.setContentView(wrap)
+    dlg.window?.apply {
+        setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+    dlg.show()
 }
 
 /**

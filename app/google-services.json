@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "448420227661",
+    "project_id": "app-party-wpnative",
+    "storage_bucket": "app-party-wpnative.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:448420227661:android:a6b6c80da47b3862f88a04",
+        "android_client_info": {
+          "package_name": "app.party.wpnative"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDoe_expw1tpwcncWj0PEFKdpQib-F_oGg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
