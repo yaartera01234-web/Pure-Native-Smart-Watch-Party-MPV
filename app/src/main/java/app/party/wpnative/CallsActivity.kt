@@ -85,11 +85,18 @@ class CallsActivity : Activity() {
             background = roundBox(Color.argb(8, 255, 255, 255), Color.argb(15, 255, 255, 255), 0, 1)
         }
         bar.addView(squareBtn("←", gradient = false) { finish() }, lp(dp(40), dp(40)))
-        bar.addView(TextView(this).apply {
-            text = "📞 Calls"
-            textSize = 16f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(Color.WHITE)
+
+        // 📞 emoji ki jagah wahi vector phone icon jo chat ke header mein hai
+        bar.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(WpIcon(this@CallsActivity, "phone"), lp(dp(18), dp(18)))
+            addView(TextView(this@CallsActivity).apply {
+                text = "Calls"
+                textSize = 16f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(Color.WHITE)
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(7) })
         }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
         val menuBtn = squareBtn("☰", gradient = true) {}
         menuBtn.setOnClickListener { showCallMenu(menuBtn) }
@@ -170,13 +177,11 @@ class CallsActivity : Activity() {
         })
         row.addView(right, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        // Green call button
-        row.addView(TextView(this).apply {
-            text = "📞"
-            textSize = 16f
-            gravity = Gravity.CENTER
+        // Green call button — andar wahi vector phone icon (chat wale jaisa, emoji nahi)
+        row.addView(FrameLayout(this).apply {
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
                 intArrayOf(hex("#22c55e"), hex("#10b981"))).apply { shape = GradientDrawable.OVAL }
+            addView(WpIcon(this@CallsActivity, "phone"), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
             setOnClickListener { toast("Call agle step mein") }
         }, lp(dp(42), dp(42)).apply { leftMargin = dp(12) })
 

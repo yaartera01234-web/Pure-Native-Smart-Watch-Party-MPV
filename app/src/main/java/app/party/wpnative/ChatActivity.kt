@@ -80,6 +80,11 @@ class ChatActivity : Activity() {
     private var replyTo: Msg? = null
     private var animId = -1          // jis nay message ko abhi entry animation milti hai
     private var emojiTarget: Msg? = null   // ➕ se jis message pe emoji lagana hai
+    private var typingOn = false     // kya doosra wala abhi likh raha hai (Instagram wale dots)
+
+    // DEMO: jab tak asli E2E/server nahi aata, peer ki typing dikhane ke liye.
+    // Asli chat aane par isko false kar dena — dots tab server ke signal se chalenge.
+    private val demoPeerTyping = true
 
     private lateinit var threadBox: LinearLayout
     private lateinit var scroll: ScrollView
@@ -104,6 +109,12 @@ class ChatActivity : Activity() {
         seedDemo()
         renderThread()
         scrollBottom()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Kisi aur screen (inbox) se ye friend hat gaya ho to chat khuli nahi rehni chahiye
+        if (!Friends.has(this, peer)) finish()
     }
 
     // ============================ SCREEN ============================
@@ -254,6 +265,7 @@ class ChatActivity : Activity() {
         if (msgs.isEmpty()) {
             threadBox.addView(emptyState(),
                 lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(40) })
+            if (typingOn) addTypingRow((resources.displayMetrics.widthPixels * 0.85f).toInt())
             return
         }
 
@@ -285,6 +297,74 @@ class ChatActivity : Activity() {
                 bottomMargin = dp(10)
             })
         }
+
+        // Doosra wala likh raha ho to sabse neeche Instagram wale 3 dots
+        if (typingOn) addTypingRow(rowW)
+    }
+
+    /** Typing wali row ko thread ke aakhir mein lagata hai. */
+    private fun addTypingRow(rowW: Int) {
+        threadBox.addView(buildTypingRow(), lp(rowW, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.START
+            bottomMargin = dp(10)
+        })
+    }
+
+    /**
+     * Instagram wala typing indicator: peer ka avatar + usi jaise bubble ke andar 3 hilte dots.
+     * (Website #dm-typing ke dots se banaya, sample dekh kar yahi style chuna gaya.)
+     */
+    private fun buildTypingRow(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM or Gravity.START
+        }
+
+        // Avatar (bilkul message wali row jaisa)
+        row.addView(TextView(this).apply {
+            text = peer.first().uppercase()
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(peerColor) }
+        }, lp(dp(34), dp(34)))
+
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.START
+        }
+        // Naam (message wali rows ki tarah)
+        col.addView(TextView(this).apply {
+            text = peer
+            textSize = 11f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(peerColor)
+            alpha = 0.8f
+            setSingleLine(true)
+            setPadding(dp(8), 0, 0, 0)
+        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(2) })
+
+        // Bubble: doosre wale ke bubble jaisa (radius 22, halka glassy) + andar 3 dots
+        val dots = TypingDots(this)
+        val bubble = FrameLayout(this).apply {
+            setPadding(dp(16), dp(11), dp(16), dp(11))
+            background = roundBox(Color.argb(23, 255, 255, 255), Color.argb(36, 255, 255, 255), 22, 1)
+            addView(dots, FrameLayout.LayoutParams(dots.desiredWidth(), dots.desiredHeight(), Gravity.START))
+        }
+        // Bubble ki jagah bilkul message wali row jaisi (avatar se 8dp door)
+        col.addView(bubble, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
+        return row
+    }
+
+    /** Dots dikhane/chhupane ka switch — asli chat mein server ke signal se chalega. */
+    private fun setTyping(on: Boolean) {
+        if (typingOn == on) return
+        typingOn = on
+        renderThread()
+        if (on) scrollBottom()
     }
 
     /** Ek message ki row: [avatar] [naam + bubble + reactions + time] (apna = ulti taraf). */
@@ -484,6 +564,11 @@ class ChatActivity : Activity() {
     /**
      * Instagram wala jadoo: emoji neeche se upar fly hoke ~3 second mein hawa ho jaye.
      * Ek se zyada emoji saath saath ud sakte hain (har reaction apna animator banata hai).
+     *
+     * YE EK HI RASTA hai reaction dikhane ka (abhi sirf toggleRx isi ko bulata hai).
+     * Asli E2E chat aane par: doosri taraf se reaction milte hi bas
+     *      m.rx[emoji] = false; renderThread(); flyReaction(emoji)
+     * -> dono devices par emoji udega. Koi alag code nahi.
      */
     private fun flyReaction(emoji: String) {
         val v = TextView(this).apply {
@@ -522,15 +607,6 @@ class ChatActivity : Activity() {
             })
             start()
         }
-    }
-
-    /** Demo: doosri taraf se reaction (asli chat mein net se aayegi) -> emoji ud kar dikhega. */
-    private fun peerReact(m: Msg) {
-        val emoji = "❤️"
-        if (m.rx.containsKey(emoji)) return
-        m.rx[emoji] = false
-        renderThread()
-        flyReaction(emoji)
     }
 
     /** Bubble ke andar reply ka hissa (website .quote). */
@@ -825,12 +901,15 @@ class ChatActivity : Activity() {
         renderThread()
         scrollBottom()
         input.setText("")
-        // Demo: kuch der baad doosri taraf se reaction -> emoji udta hua upar jayega
-        window.decorView.postDelayed({ if (!isFinishing) peerReact(m) }, 1500)
         // Demo: thodi der baad doosri taraf "parh liya" -> ✓✓ neela
         window.decorView.postDelayed({
             if (!isFinishing && msgs.any { it.id == m.id }) { m.read = true; renderThread() }
         }, 900)
+        // Demo: peer thodi der typing karta hai (asli E2E mein server bataega)
+        if (demoPeerTyping) {
+            window.decorView.postDelayed({ if (!isFinishing) setTyping(true) }, 1200)
+            window.decorView.postDelayed({ if (!isFinishing) setTyping(false) }, 4200)
+        }
     }
 
     private fun setReply(m: Msg) {
@@ -948,7 +1027,7 @@ class ChatActivity : Activity() {
         Toast.makeText(this, "Copy ho gaya", Toast.LENGTH_SHORT).show()
     }
 
-    /** ☰ menu: sirf Chat clear (website ki tarah). */
+    /** ☰ menu: Chat clear + Remove Friend (website #dm-pop4 ki tarah). */
     private fun showChatMenu(anchor: View) {
         showDropMenu(anchor, listOf(
             "🧹  Chat clear" to {
@@ -958,8 +1037,28 @@ class ChatActivity : Activity() {
                     renderThread()
                     Toast.makeText(this, "Chat clear ho gayi", Toast.LENGTH_SHORT).show()
                 }
-            }
+            },
+            "👤  Remove Friend" to { removeFriend(peer) }
         ))
+    }
+
+    /**
+     * Friend hatao: website ke #dm-remove-dialog jaisa confirm, phir
+     * Friends list se nikal do aur chat band karke inbox par wapas jao.
+     */
+    private fun removeFriend(name: String) {
+        if (!Friends.has(this, name)) {
+            Toast.makeText(this, "$name ab friend nahi hai", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+        removeFriendDialog(this, name) {
+            Friends.remove(this, name)
+            msgs.clear()
+            Toast.makeText(this, "$name friend list se hat gaya", Toast.LENGTH_SHORT).show()
+            finish()
+            overridePendingTransition(0, 0)
+        }
     }
 
     private fun scrollBottom() {
@@ -1021,104 +1120,5 @@ class ChatActivity : Activity() {
             rx = LinkedHashMap<String, Boolean>().apply { put("🔥", false) }))
         msgs.add(Msg(nextId++, "Haan, 9 baje ready rehna", true,
             timeShort(now - 540_000L), dayLabel(now), read = true))
-    }
-}
-
-/** Composer ke icons — website ke SVG se utare gaye: "photo" aur "mic". */
-private class WpIcon(ctx: Context, private val kind: String) : View(ctx) {
-
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
-    private val path = Path()
-    private val box = RectF()
-
-    override fun onDraw(c: Canvas) {
-        val s = width / 24f
-        c.save()
-        c.scale(s, s)
-        p.clearShadowLayer()
-        if (kind == "photo") {
-            // frame
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 1.9f
-            box.set(3f, 5f, 21f, 19f)
-            c.drawRoundRect(box, 2f, 2f, p)
-            // sooraj
-            p.style = Paint.Style.FILL
-            c.drawCircle(8.6f, 9.6f, 2.1f, p)
-            // pahad
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 1.7f
-            path.reset()
-            path.moveTo(3f, 18.2f)
-            path.lineTo(8.6f, 11.6f)
-            path.lineTo(12.8f, 16.6f)
-            path.lineTo(15.8f, 13.4f)
-            path.lineTo(21f, 18.6f)
-            c.drawPath(path, p)
-        } else if (kind == "phone") {
-            // website #dm-call-btn ka phone SVG (Lucide phone) + purple glow
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 2f
-            p.setShadowLayer(3f, 0f, 1f, Color.argb(110, 139, 114, 255))
-            path.reset()
-            path.moveTo(22f, 16.92f)
-            path.lineTo(22f, 19.92f)
-            path.quadTo(21.6f, 21.6f, 19.82f, 21.92f)
-            path.quadTo(15.96f, 21.5f, 11.19f, 18.85f)
-            path.quadTo(7.5f, 16.6f, 5.19f, 12.85f)
-            path.quadTo(2.73f, 8.1f, 2.12f, 4.18f)
-            path.quadTo(2.2f, 2.2f, 4.11f, 2f)
-            path.lineTo(7.11f, 2f)
-            path.quadTo(9.11f, 2f, 9.11f, 3.72f)
-            path.quadTo(8.9f, 5.2f, 9.81f, 6.51f)
-            path.quadTo(8.9f, 7.7f, 9.36f, 8.62f)
-            path.lineTo(8.09f, 9.91f)
-            path.quadTo(10.4f, 12.2f, 14.09f, 15.91f)
-            path.lineTo(15.36f, 14.64f)
-            path.quadTo(16.6f, 13.8f, 17.47f, 14.19f)
-            path.quadTo(18.9f, 14.1f, 20.26f, 14.89f)
-            path.quadTo(21.6f, 14.9f, 22f, 16.92f)
-            path.close()
-            c.drawPath(path, p)
-        } else {
-            // mic ka capsule
-            p.style = Paint.Style.FILL
-            box.set(9f, 2f, 15f, 13f)
-            c.drawRoundRect(box, 3f, 3f, p)
-            // neeche wali U
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 2f
-            path.reset()
-            box.set(5f, 5f, 19f, 19f)
-            path.arcTo(box, 0f, 180f)
-            c.drawPath(path, p)
-            // dandi + base
-            c.drawLine(12f, 19f, 12f, 21.6f, p)
-            c.drawLine(8.4f, 21.6f, 15.6f, 21.6f, p)
-            // chamak (chhote sitare)
-            p.style = Paint.Style.FILL
-            star(c, 19.2f, 3.2f, 1.7f)
-            star(c, 21.6f, 6.2f, 1.1f)
-            star(c, 16.6f, 5.6f, 1f)
-        }
-        c.restore()
-    }
-
-    private fun star(c: Canvas, cx: Float, cy: Float, r: Float) {
-        path.reset()
-        path.moveTo(cx, cy - r)
-        path.lineTo(cx + r * 0.42f, cy - r * 0.42f)
-        path.lineTo(cx + r, cy)
-        path.lineTo(cx + r * 0.42f, cy + r * 0.42f)
-        path.lineTo(cx, cy + r)
-        path.lineTo(cx - r * 0.42f, cy + r * 0.42f)
-        path.lineTo(cx - r, cy)
-        path.lineTo(cx - r * 0.42f, cy - r * 0.42f)
-        path.close()
-        c.drawPath(path, p)
     }
 }

@@ -53,6 +53,12 @@ class InboxActivity : Activity() {
         setContentView(buildScreen())
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Chat screen se koi friend remove hua ho to list turant saaf ho jaye
+        if (::listBox.isInitialized) fillInbox()
+    }
+
     private fun buildScreen(): View {
         val root = FrameLayout(this)
         // Website ka dm-sheet radial background
@@ -231,7 +237,7 @@ class InboxActivity : Activity() {
     /** Neeche ka nav: shared BottomNav.kt, Chat active. */
     private fun buildBottomBar(): View = buildBottomNav(this, "chat")
 
-    /** Chat ☰ menu: Pinned chats + Chat clear (confirm ke saath). */
+    /** Chat ☰ menu: Pinned chats + Chat clear + Remove Friend. */
     private fun showChatMenu(anchor: View) {
         showDropMenu(anchor, listOf(
             "📌  Pinned chats" to { showPinSheet() },
@@ -239,25 +245,131 @@ class InboxActivity : Activity() {
                 confirmThen(this, "Chat clear karein?", "Chat ki history clear hogi.") {
                     Toast.makeText(this, "Chat clear (demo)", Toast.LENGTH_SHORT).show()
                 }
-            }
+            },
+            "👤  Remove Friend" to { showRemoveSheet() }
         ))
+    }
+
+    /** Upar wale ☰ se: pehle poochhna kaunsa dost hatana hai (poorani list). */
+    private fun showRemoveSheet() {
+        val list = visibleChats()
+        if (list.isEmpty()) {
+            Toast.makeText(this, "Friend list khali hai", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val dlg = Dialog(this)
+        dlg.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(18))
+            background = GradientDrawable().apply {
+                setColor(hex("#1b1433"))
+                cornerRadii = floatArrayOf(dp(22).toFloat(), dp(22).toFloat(), dp(22).toFloat(), dp(22).toFloat(), 0f, 0f, 0f, 0f)
+            }
+        }
+        sheet.addView(TextView(this).apply {
+            text = "Kaunsa dost hatana hai?"
+            textSize = 16f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        })
+        sheet.addView(TextView(this).apply {
+            text = "Dost par tap karo, phir confirm karo"
+            textSize = 12f
+            setTextColor(hex("#a291c6"))
+        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(2); bottomMargin = dp(10)
+        })
+
+        list.forEach { f ->
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                background = roundBox(Color.argb(10, 255, 255, 255), Color.argb(15, 255, 255, 255), 14, 1)
+            }
+            item.addView(TextView(this).apply {
+                text = f.name.first().toString().uppercase()
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(Color.WHITE)
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(f.color) }
+            }, lp(dp(32), dp(32)))
+            item.addView(TextView(this).apply {
+                text = f.name
+                textSize = 14f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(Color.WHITE)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12) })
+            item.addView(TextView(this).apply {
+                text = "Remove"
+                textSize = 12f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(hex("#fda4af"))
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            item.setOnClickListener { dlg.dismiss(); removeFriend(f) }
+            sheet.addView(item, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
+        }
+
+        dlg.setContentView(sheet)
+        dlg.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM)
+        }
+        dlg.show()
     }
 
     /** List ko chats ke hisaab se bharta hai (pinned upar). Label (index 0) rehta hai. */
     private fun fillInbox() {
         val keep = 1
         while (listBox.childCount > keep) listBox.removeViewAt(keep)
-        chats.sortedByDescending { it.pinned }.forEach { listBox.addView(buildRow(it)) }
+        visibleChats().sortedByDescending { it.pinned }.forEach { listBox.addView(buildRow(it)) }
     }
 
-    /** Chat par zor se press: Pin / Unpin aur Chat clear. */
+    /**
+     * Store (Friends.kt) se naam le kar rows banata hai — jise Remove Friend kiya gaya
+     * wo is list mein dobara kabhi nahi aayega (chahe chat screen se hataya ho).
+     */
+    private fun visibleChats(): List<Friend> {
+        val meta = chats.associateBy { it.name }
+        return Friends.all(this).map { n -> meta[n] ?: Friend(n, "Ok", "12:31 AM", false, false, colorFor(n)) }
+    }
+
+    private fun colorFor(name: String): Int {
+        val palette = listOf("#f472b6", "#38bdf8", "#fb7185", "#a78bfa", "#34d399", "#fbbf24")
+        return hex(palette[Math.floorMod(name.hashCode(), palette.size)])
+    }
+
+    /** Chat par zor se press: Pin / Unpin, Chat clear aur Remove Friend. */
     private fun showRowMenu(anchor: View, f: Friend) {
         showDropMenu(anchor, listOf(
             (if (f.pinned) "📌  Unpin karo" else "📌  Pin karo") to { togglePin(f.name) },
             "🧹  Chat clear karo" to {
                 confirmThen(this, "${f.name} ka chat clear karein?", "Is chat ki history clear hogi.") { clearChat(f.name) }
-            }
+            },
+            "👤  Remove Friend" to { removeFriend(f) }
         ))
+    }
+
+    /**
+     * Friend hatao: website ke #dm-remove-dialog jaisa confirm, phir
+     * Friends store se nikal do (Inbox + Chat dono par asar).
+     */
+    private fun removeFriend(f: Friend) {
+        if (!Friends.has(this, f.name)) {
+            fillInbox()
+            Toast.makeText(this, "${f.name} pehle hi hat chuka hai", Toast.LENGTH_SHORT).show()
+            return
+        }
+        removeFriendDialog(this, f.name) {
+            Friends.remove(this, f.name)
+            chats.removeAll { it.name == f.name }
+            fillInbox()
+            Toast.makeText(this, "${f.name} friend list se hat gaya", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun togglePin(name: String) {
