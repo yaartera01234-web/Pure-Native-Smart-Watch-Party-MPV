@@ -51,6 +51,41 @@ data class PartyMessage(
     val wave: String
 )
 
+/** Website-compatible retained playback state and transient command payloads. */
+data class PartyPlaybackMedia(
+    val type: String,
+    val url: String,
+    val videoId: String
+) {
+    fun key(): String = "$type:${if (type == "youtube") videoId else url}"
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("type", type); put("url", url); put("videoId", videoId)
+    }
+
+    companion object {
+        fun fromJson(o: JSONObject): PartyPlaybackMedia = PartyPlaybackMedia(
+            o.optString("type", "mp4"), o.optString("url"), o.optString("videoId"))
+    }
+}
+
+data class PartyPlaybackState(
+    val media: PartyPlaybackMedia,
+    val time: Double,
+    val playing: Boolean,
+    val at: Long
+)
+
+data class PartyPlaybackCommand(
+    val action: String,
+    val from: String,
+    val by: String,
+    val time: Double?,
+    val playing: Boolean?,
+    val user: Boolean,
+    val media: PartyPlaybackMedia?,
+    val raw: JSONObject
+)
+
 /** Authoritative website queue item: thumbnail/title + optional custom rename. */
 data class PartyQueueItem(
     val id: String,
@@ -91,6 +126,8 @@ interface PartyTowerListener {
     fun onPartyMedia(mid: String, bytes: ByteArray)
     fun onPartyReactions(mid: String, values: Map<String, Pair<Int, Boolean>>)
     fun onPartyQueue(items: List<PartyQueueItem>, index: Int)
+    fun onPartyPlaybackState(state: PartyPlaybackState)
+    fun onPartyPlaybackCommand(command: PartyPlaybackCommand)
 }
 
 /**
@@ -147,6 +184,8 @@ object PartyTower {
     private val reactions = HashMap<String, LinkedHashMap<String, LinkedHashSet<String>>>()
     private var queue = mutableListOf<PartyQueueItem>()
     private var queueIndex = -1
+    private var playbackState: PartyPlaybackState? = null
+    private val seenPlaybackCommands = LinkedHashSet<String>()
 
     private val presenceBeat = object : Runnable {
         override fun run() {
@@ -262,7 +301,8 @@ object PartyTower {
         val c = client ?: return
         val topics = arrayOf(
             "$base/chat", "$base/chat/msg/+", "$base/chat/blob/+", "$base/events",
-            "$base/react", "$base/members/+", "$base/typing/+", "$base/queue"
+            "$base/react", "$base/members/+", "$base/typing/+", "$base/queue",
+            "$base/cmd", "$base/state"
         )
         try { c.subscribe(topics, IntArray(topics.size) { 1 }) } catch (_: Throwable) { }
     }
@@ -373,6 +413,51 @@ object PartyTower {
         return true
     }
 
+    /** Retained /state stays website-compatible so browser and native members can mix. */
+    fun publishPlaybackState(media: PartyPlaybackMedia, time: Double, playing: Boolean): Boolean {
+        if (!connected) return false
+        val at = System.currentTimeMillis()
+        val body = media.toJson().apply {
+            put("time", time.takeIf { it.isFinite() && it >= 0 } ?: 0.0)
+            put("playing", playing); put("at", at)
+        }
+        playbackState = PartyPlaybackState(media, body.optDouble("time"), playing, at)
+        publish("$base/state", body.toString().toByteArray(StandardCharsets.UTF_8), true)
+        return true
+    }
+
+    /** Explicit playback controls are transient. [_wp4] carries the no-host sync epoch. */
+    fun publishPlaybackCommand(
+        action: String,
+        time: Double? = null,
+        playing: Boolean? = null,
+        media: PartyPlaybackMedia? = null,
+        user: Boolean = false,
+        wp4: JSONObject? = null
+    ): Boolean {
+        if (!connected) return false
+        val body = JSONObject().apply {
+            put("action", action); put("from", memberId); put("by", myName); put("rid", randomId())
+            if (time != null && time.isFinite() && time >= 0) put("time", time)
+            if (playing != null) put("playing", playing)
+            if (media != null) put("video", media.toJson())
+            if (user) put("user", true)
+            if (wp4 != null) put("_wp4", wp4)
+        }
+        publish("$base/cmd", body.toString().toByteArray(StandardCharsets.UTF_8), false)
+        return true
+    }
+
+    fun publishSyncPacket(payload: JSONObject): Boolean {
+        if (!connected) return false
+        val body = JSONObject().apply {
+            put("action", "wp-sync4"); put("from", memberId); put("by", myName)
+            put("rid", randomId()); put("payload", payload)
+        }
+        publish("$base/cmd", body.toString().toByteArray(StandardCharsets.UTF_8), false)
+        return true
+    }
+
     /** Explicit confirmed Leave only. Disconnect/glitch kabhi yahan nahi aata. */
     fun leave(done: (() -> Unit)? = null) {
         if (explicitLeaving) return
@@ -419,6 +504,8 @@ object PartyTower {
                 try { last = c.publish("$base/chat/blob/$blob", ByteArray(0), 1, true) } catch (_: Throwable) {}
             }
         }
+        // Playback media state is Room-ephemeral; retained playlist intentionally survives.
+        try { last = c.publish("$base/state", ByteArray(0), 1, true) } catch (_: Throwable) {}
         try { last?.waitForCompletion(8_000L) } catch (_: Throwable) {}
     }
 
@@ -431,6 +518,8 @@ object PartyTower {
             topic == "$base/react" -> if (payload.isNotEmpty()) handleReaction(payload)
             topic == "$base/events" -> if (payload.isNotEmpty()) handleEvent(payload)
             topic == "$base/queue" -> handleQueue(payload)
+            topic == "$base/state" -> handlePlaybackState(payload)
+            topic == "$base/cmd" -> if (payload.isNotEmpty()) handlePlaybackCommand(payload)
         }
     }
 
@@ -553,6 +642,39 @@ object PartyTower {
         emitQueue()
     }
 
+    private fun handlePlaybackState(payload: ByteArray) {
+        if (payload.isEmpty()) { playbackState = null; return }
+        val o = JSONObject(String(payload, StandardCharsets.UTF_8))
+        val media = PartyPlaybackMedia.fromJson(o)
+        if (media.type.isBlank() || media.type == "none") return
+        val state = PartyPlaybackState(media,
+            o.optDouble("time", 0.0).takeIf { it.isFinite() && it >= 0 } ?: 0.0,
+            o.optBoolean("playing"), o.optLong("at", System.currentTimeMillis()))
+        playbackState = state
+        main.post { listener?.onPartyPlaybackState(state) }
+    }
+
+    private fun handlePlaybackCommand(payload: ByteArray) {
+        val raw = JSONObject(String(payload, StandardCharsets.UTF_8))
+        if (raw.optString("from") == memberId) return
+        val rid = raw.optString("rid")
+        if (rid.isNotBlank()) {
+            synchronized(seenPlaybackCommands) {
+                if (!seenPlaybackCommands.add(rid)) return
+                while (seenPlaybackCommands.size > 500) {
+                    val first = seenPlaybackCommands.firstOrNull() ?: break
+                    seenPlaybackCommands.remove(first)
+                }
+            }
+        }
+        val media = raw.optJSONObject("video")?.let(PartyPlaybackMedia::fromJson)
+        val time = raw.optDouble("time", Double.NaN).takeIf { it.isFinite() && it >= 0 }
+        val playing = if (raw.has("playing")) raw.optBoolean("playing") else null
+        val command = PartyPlaybackCommand(raw.optString("action"), raw.optString("from"),
+            raw.optString("by", "Friend"), time, playing, raw.optBoolean("user"), media, raw)
+        main.post { listener?.onPartyPlaybackCommand(command) }
+    }
+
     private fun trimRetainedIfNeeded() {
         if (messages.size <= KEEP) return
         val old = messages.values.sortedBy { it.ts }.take(messages.size - KEEP)
@@ -572,6 +694,7 @@ object PartyTower {
     private fun emitSnapshot() {
         postStatus(connected, if (connected) "🗼 ${towerLabel(towerIndex)} connected" else "📻 Tower reconnect ho raha hai…")
         emitMembers(); emitQueue()
+        playbackState?.let { state -> main.post { listener?.onPartyPlaybackState(state) } }
         val list = messages.values.filter { it.ts > visibleAfter }.sortedBy { it.ts }
         list.forEach { m -> main.post { listener?.onPartyMessage(m) } }
         list.forEach(::tryDeliverMedia)
@@ -609,6 +732,8 @@ object PartyTower {
     private fun resetTransient() {
         members.clear(); messages.clear(); messageJson.clear(); encryptedBlobs.clear()
         deliveredMedia.clear(); reactions.clear(); queue.clear(); queueIndex = -1
+        playbackState = null
+        synchronized(seenPlaybackCommands) { seenPlaybackCommands.clear() }
     }
 
     private fun cleanRoom(raw: String): String = raw.trim().replace(Regex("[#+\\u0000]"), "").take(20).ifBlank { "main" }

@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
@@ -43,7 +44,13 @@
             android:name=".PartyRoomActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize"
-            android:screenOrientation="unspecified" />
+            android:screenOrientation="unspecified"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|keyboard" />
+        <service
+            android:name=".PartyPlayerService"
+            android:exported="false"
+            android:stopWithTask="true"
+            android:foregroundServiceType="mediaPlayback" />
         <service
             android:name=".PartyTaskService"
             android:exported="false"

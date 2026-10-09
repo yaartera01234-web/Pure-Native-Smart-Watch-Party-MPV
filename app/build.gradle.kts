@@ -17,8 +17,11 @@ android {
         applicationId = "app.party.wpnative"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.17-ROOM-TOWER"
+        versionCode = 2
+        versionName = "0.18-NATIVE-MPV"
+        // Reference player ships one native MPV ABI; keeping it exact also avoids a
+        // needlessly huge universal APK.
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
 
     compileOptions {
@@ -30,6 +33,12 @@ android {
         release {
             isMinifyEnabled = false
         }
+    }
+
+    packaging {
+        // libmpv's native libraries must be installed uncompressed on older devices.
+        jniLibs.useLegacyPackaging = true
+        resources.excludes += setOf("META-INF/*.kotlin_module", "META-INF/DEPENDENCIES")
     }
 }
 
@@ -45,4 +54,13 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging")   // push (agle step mein)
     // Party Room ka selected public MQTT tower (EMQX / HiveMQ / tyckr), pure native WSS.
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
+
+    // Smart Music Watch Party ACT7 ka exact MPV surface/core pair.
+    implementation("io.github.yuroyami:libmpvkt:0.3.0")
+    implementation("io.github.yuroyami:libmpvkt-view:0.3.0")
+
+    // YouTube page URL ko device par signed video + audio streams mein resolve karta hai.
+    implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
 }
