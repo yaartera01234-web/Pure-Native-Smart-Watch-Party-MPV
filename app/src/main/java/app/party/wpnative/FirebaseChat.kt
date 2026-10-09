@@ -87,78 +87,30 @@ object FirebaseChat {
     }
 
     /** Live: sirf wahi messages jo `sinceTs` ke baad aaye (purane dobara nahi aate). */
+    /**
+     * Chat ki **live nazar**: aakhri 50 messages.
+     * Naya message bhi isi se aata hai, aur koi message mita (deleted nishan) to wo bhi.
+     */
     fun listenNew(
         ctx: Context,
         chatId: String,
-        sinceTs: Long,
-        onAdded: (List<ChatMsg>) -> Unit
+        onDocs: (List<ChatMsg>) -> Unit
     ): ListenerRegistration? {
         if (!isReady(ctx)) return null
         return try {
             msgs(ctx, chatId)
-                .whereGreaterThan("ts", sinceTs)
-                .orderBy("ts", Query.Direction.ASCENDING)
+                .orderBy("ts", Query.Direction.DESCENDING)
+                .limit(50)
                 .addSnapshotListener { snap, _ ->
                     if (snap == null) return@addSnapshotListener
                     val out = snap.documents.mapNotNull { d -> d.data?.let { ChatMsg.fromMap(d.id, it) } }
-                    if (out.isNotEmpty()) onAdded(out)
+                    onDocs(out)
                 }
         } catch (t: Throwable) {
             null
         }
     }
 
-    /** Ek message mitao (delete). */
-    fun delete(ctx: Context, chatId: String, id: String) {
-        if (!isReady(ctx) || id.isBlank()) return
-        try { msgs(ctx, chatId).document(id).delete() } catch (t: Throwable) { }
-    }
-
-    /** Chat clear: jo messages is device ke paas hain wo sab mita do (batch). */
-    fun deleteAll(ctx: Context, chatId: String, ids: List<String>) {
-        if (!isReady(ctx)) return
-        try {
-            val batch = db(ctx).batch()
-            ids.filter { it.isNotBlank() }.forEach { batch.delete(msgs(ctx, chatId).document(it)) }
-            batch.commit()
-        } catch (t: Throwable) { }
-    }
-
-    // ------------------------------------------------------------ presence
-
-    fun setPresence(ctx: Context, name: String, online: Boolean) {
-        if (!isReady(ctx)) return
-        try {
-            db(ctx).collection("users").document(name)
-                .set(mapOf("online" to online, "seenAt" to System.currentTimeMillis()), SetOptions.merge())
-        } catch (t: Throwable) { }
-    }
-
-    /** Apna FCM token save karo (doosra phone isi par push bhejega). */
-    fun saveToken(ctx: Context, name: String, token: String) {
-        if (!isReady(ctx)) return
-        try {
-            db(ctx).collection("users").document(name)
-                .set(mapOf("fcmToken" to token), SetOptions.merge())
-        } catch (t: Throwable) { }
-    }
-
-    /** Doosre ka FCM token + online haalat (push bhejne se pehle). */
-    fun getToken(ctx: Context, name: String, cb: (String?, Boolean) -> Unit) {
-        if (!isReady(ctx)) { cb(null, false); return }
-        try {
-            db(ctx).collection("users").document(name).get()
-                .addOnSuccessListener { snap ->
-                    cb(snap.getString("fcmToken"), snap.getBoolean("online") ?: false)
-                }
-                .addOnFailureListener { cb(null, false) }
-        } catch (t: Throwable) { cb(null, false) }
-    }
-
-    /**
-     * Background service ke liye: is chat ka **sabse naya** message, live.
-     * (naye message par turant callback — service ko notification dikhane ke liye)
-     */
     fun listenLast(ctx: Context, chatId: String, onMsg: (ChatMsg) -> Unit): ListenerRegistration? {
         if (!isReady(ctx)) return null
         return try {

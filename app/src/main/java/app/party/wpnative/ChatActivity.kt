@@ -360,6 +360,7 @@ class ChatActivity : Activity(), ChatHost {
         }
         var lastDay = ""
         for (m in msgs) {
+            if (m.deleted) continue
             if (m.day != lastDay) {
                 lastDay = m.day
                 out.add(Row(Row.DAY, "d:$lastDay", lastDay, null, lastDay))
@@ -372,7 +373,7 @@ class ChatActivity : Activity(), ChatHost {
 
     /** Is line ka maal badla hai ya nahi — DiffUtil isi se pakad leta hai. */
     private fun sigOf(m: Msg): String =
-        m.text + "|" + m.read + "|" + m.replyText + "|" + m.time + "|" +
+        m.text + "|" + m.read + "|" + m.replyText + "|" + m.time + "|" + m.deleted + "|" +
             m.rx.entries.joinToString(",") { "${it.key}:${it.value}" }
 
     /** Dots dikhane/chhupane ka switch — asli chat mein server ke signal se chalega. */
@@ -654,6 +655,9 @@ class ChatActivity : Activity(), ChatHost {
 
         FirebaseChat.loadLast(this, chatId, PAGE) { list ->
             if (list.isNotEmpty()) {
+                // Doosre phone ne koi message mitaya ho to wo server par nahi hai ->
+                // phone ke cache se bhi hata do (warna wapas aa jata hai)
+                dropDeletedLocally(list)
                 mergeIncoming(list, prepend = false)
                 saveCache()
             }
@@ -670,15 +674,34 @@ class ChatActivity : Activity(), ChatHost {
         typingListener = FirebaseChat.listenTyping(this, chatId, me) { on -> setTyping(on) }
     }
 
-    /** Naye messages ka live listener (sirf sabse naye ke baad wale). */
+    /** Live nazar: naya message bhi aata hai, aur doosre ka mitaya hua bhi turant hat ta hai. */
     private fun startLiveListener() {
         msgListener?.remove()
-        msgListener = FirebaseChat.listenNew(this, chatId, newestTs()) { list ->
-            mergeIncoming(list, prepend = false)
-            saveCache()
-            renderThread()
-            scrollBottom()
+        msgListener = FirebaseChat.listenNew(this, chatId) { list ->
+            // --- doosre ne delete kiya? -> yahan se bhi turant hata do ---
+            val gone = list.filter { it.deleted }.map { it.id }.toHashSet()
+            val removed = gone.isNotEmpty() && msgs.removeAll { it.fid in gone }
+            // --- naye messages ---
+            val before = msgs.size
+            mergeIncoming(list.filterNot { it.deleted }, prepend = false)
+            val added = msgs.size > before
+            if (removed || added) {
+                saveCache()
+                renderThread()
+            }
+            if (added) scrollBottom()      // naya message aaya to neeche jao
         }
+    }
+
+    /**
+     * Server se mile messages ke daayre mein: jo message **server par nahi** (mita diya gaya)
+     * aur phone ke cache mein abhi bhi hai -> use bhi hata do.
+     */
+    private fun dropDeletedLocally(server: List<ChatMsg>) {
+        if (server.isEmpty()) return
+        val ids = server.map { it.id }.toHashSet()
+        val from = server.minOf { it.ts }
+        msgs.removeAll { it.fid.isNotBlank() && it.ts >= from && it.fid !in ids }
     }
 
     private fun toMsg(cm: ChatMsg): Msg = Msg(
@@ -691,7 +714,8 @@ class ChatActivity : Activity(), ChatHost {
         replyName = cm.replyName,
         replyText = cm.replyText,
         fid = cm.id,
-        ts = cm.ts
+        ts = cm.ts,
+        deleted = cm.deleted
     )
 
     private fun newestTs(): Long = msgs.maxOfOrNull { it.ts } ?: 0L
@@ -700,7 +724,9 @@ class ChatActivity : Activity(), ChatHost {
     /** Firebase se aaye messages ko milao (ek hi message do baar na lage). */
     private fun mergeIncoming(list: List<ChatMsg>, prepend: Boolean) {
         val known = msgs.map { it.fid }.toHashSet()
-        val fresh = list.filter { it.id.isNotBlank() && !known.contains(it.id) }
+        val fresh = list.filter {
+            !it.deleted && it.id.isNotBlank() && !known.contains(it.id)
+        }
         if (fresh.isEmpty()) return
         val converted = fresh.map { toMsg(it) }
         if (prepend) msgs.addAll(0, converted) else msgs.addAll(converted)

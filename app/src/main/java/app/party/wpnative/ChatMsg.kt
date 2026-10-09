@@ -18,7 +18,8 @@ data class ChatMsg(
     var read: Boolean = false,
     var replyName: String = "",
     var replyText: String = "",
-    var type: String = "text"
+    var type: String = "text",
+    var deleted: Boolean = false      // mita hua message (doosre phone ko bhi pata chale is liye)
 ) {
 
     /** Firestore ke liye. */
@@ -30,7 +31,8 @@ data class ChatMsg(
         "read" to read,
         "replyName" to replyName,
         "replyText" to replyText,
-        "type" to type
+        "type" to type,
+        "deleted" to deleted
     )
 
     /** Phone ke cache ke liye. */
@@ -43,6 +45,7 @@ data class ChatMsg(
         put("replyName", replyName)
         put("replyText", replyText)
         put("type", type)
+        put("deleted", deleted)
     }
 
     companion object {
@@ -60,7 +63,8 @@ data class ChatMsg(
             read = m["read"] as? Boolean ?: false,
             replyName = m["replyName"] as? String ?: "",
             replyText = m["replyText"] as? String ?: "",
-            type = m["type"] as? String ?: "text"
+            type = m["type"] as? String ?: "text",
+            deleted = m["deleted"] as? Boolean ?: false
         )
 
         /** Local cache (JSON) se. */
@@ -72,7 +76,8 @@ data class ChatMsg(
             read = o.optBoolean("read", false),
             replyName = o.optString("replyName", ""),
             replyText = o.optString("replyText", ""),
-            type = o.optString("type", "text")
+            type = o.optString("type", "text"),
+            deleted = o.optBoolean("deleted", false)
         )
     }
 }

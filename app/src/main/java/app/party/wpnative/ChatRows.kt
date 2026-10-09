@@ -16,7 +16,8 @@ class Msg(
     var replyText: String = "",
     val rx: LinkedHashMap<String, Boolean> = LinkedHashMap(),
     var fid: String = "",        // Firestore document id (dobara na aaye is liye)
-    var ts: Long = 0L            // asli waqt (pagination isi se hoti hai)
+    var ts: Long = 0L,           // asli waqt (pagination isi se hoti hai)
+    var deleted: Boolean = false // mita hua — doosre phone ne delete kiya to yahan bhi hat jaye
 )
 
 /**
