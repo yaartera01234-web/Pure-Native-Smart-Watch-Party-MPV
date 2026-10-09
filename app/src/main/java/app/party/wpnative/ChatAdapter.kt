@@ -290,8 +290,10 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             // recycle hui line purani swipe/animation ki halat na Rakhe
             row.animate().cancel()
             row.translationX = 0f
-            row.alpha = 1f
             row.translationY = 0f
+            row.alpha = 1f
+            row.scaleX = 1f
+            row.scaleY = 1f
             handle.alpha = 0f
             handle.scaleX = 0.7f
             handle.scaleY = 0.7f
@@ -322,17 +324,29 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             bubble.requestLayout()
             row.requestLayout()
 
-            /* Instagram wala entry animation: naya message thoda sa neeche se
-               upar aata hai (180ms). RecyclerView ki animation nahi — apna khud ka,
-               is liye naap (size) kabhi ghalat nahi hoti. */
+            /**
+             * Instagram wala entry animation — bubble NEECHE SE UPAR aata hai.
+             *
+             * Website (party-final1.html) wala sirf 7px/180ms hai aur opacity 0 se
+             * shuru hota hai -> woh "blink" jaisa lagta hai. Yahan:
+             *   - doori 22dp (saaf nazar aaye)
+             *   - alpha 0.35 se shuru (bubble dikhe, bas halka ho -> slide nazar aaye)
+             *   - 260ms + tez-ease-out (upar aa kar baith jaye)
+             *   - thoda sa scale 0.96 -> 1 (Instagram wali "phudak")
+             * RecyclerView ki layout-animation NAHI — is liye size kabhi ghalat nahi hota.
+             */
             if (animate) {
-                row.alpha = 0f
-                row.translationY = host.dp(7).toFloat()
+                row.alpha = 0.35f
+                row.translationY = host.dp(22).toFloat()
+                row.scaleX = 0.96f
+                row.scaleY = 0.96f
                 row.animate()
                     .alpha(1f)
                     .translationY(0f)
-                    .setDuration(180L)
-                    .setInterpolator(DecelerateInterpolator())
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(260L)
+                    .setInterpolator(DecelerateInterpolator(1.8f))
                     .start()
             }
         }
