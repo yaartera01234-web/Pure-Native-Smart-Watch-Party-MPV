@@ -160,6 +160,8 @@ class PartyRoomActivity : Activity(), ChatHost {
     private lateinit var partyEmojiWrap: FrameLayout
     private lateinit var partyEmojiInput: EditText
     private lateinit var partyFlyLayer: FrameLayout
+    private val keyboardCollapseViews = mutableListOf<View>()
+    private var roomKeyboardOpen = false
 
     private fun dp(v: Float): Int = (v * resources.displayMetrics.density).roundToInt()
     override fun dp(v: Int): Int = (v * resources.displayMetrics.density).roundToInt()
@@ -216,6 +218,8 @@ class PartyRoomActivity : Activity(), ChatHost {
     }
 
     private fun buildRoom(): View {
+        keyboardCollapseViews.clear()
+        roomKeyboardOpen = false
         val root = PartyRoomBackdrop(this, palette.page.copyOf(), palette.glowA, palette.glowB,
             palette.glowC, themeIndex == 1)
         roomBackdrop = root
@@ -223,17 +227,20 @@ class PartyRoomActivity : Activity(), ChatHost {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(buildHeader(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        // Link/Play/Queue/Search — original room geometry; kaam player ke final batch mein.
-        col.addView(buildSourceRow(), lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(51f)).apply {
+        // Keyboard khule to fixed player blocks chupte hain, warna composer screen ke neeche kat jata hai.
+        val sourceRow = buildSourceRow().also(keyboardCollapseViews::add)
+        col.addView(sourceRow, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(51f)).apply {
             setMargins(dp(8f), dp(8f), dp(8f), 0)
         })
 
         // RAVE SIZE: poori screen width × 9/16. Filhaal sirf reserved native box.
-        col.addView(RavePlayerSlot(this), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        val playerSlot = RavePlayerSlot(this).also(keyboardCollapseViews::add)
+        col.addView(playerSlot, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(7f)
         })
 
-        col.addView(buildPlaylist(), lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(48f)).apply {
+        val playlist = buildPlaylist().also(keyboardCollapseViews::add)
+        col.addView(playlist, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(48f)).apply {
             setMargins(dp(8f), dp(7f), dp(8f), 0)
         })
 
@@ -249,7 +256,52 @@ class PartyRoomActivity : Activity(), ChatHost {
         partyFlyLayer = FrameLayout(this).apply { isClickable = false; isFocusable = false }
         root.addView(partyFlyLayer, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        installKeyboardSafeRoom(root)
         return root
+    }
+
+    /**
+     * Android 15 edge-to-edge mein sirf adjustResize kaafi nahi: keyboard poore Room ke
+     * fixed player ke upar aa kar composer ko neeche chhor deta hai. API 30+ par insets
+     * hum khud lagate hain; purane Android par adjustResize + visible-frame fallback.
+     */
+    private fun installKeyboardSafeRoom(root: View) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+            root.setOnApplyWindowInsetsListener { view, insets ->
+                val bars = insets.getInsets(
+                    android.view.WindowInsets.Type.systemBars() or
+                        android.view.WindowInsets.Type.displayCutout())
+                val ime = insets.getInsets(android.view.WindowInsets.Type.ime())
+                val keyboard = insets.isVisible(android.view.WindowInsets.Type.ime()) && ime.bottom > 0
+                val bottom = if (keyboard) maxOf(bars.bottom, ime.bottom) else bars.bottom
+                if (view.paddingLeft != bars.left || view.paddingTop != bars.top ||
+                    view.paddingRight != bars.right || view.paddingBottom != bottom) {
+                    view.setPadding(bars.left, bars.top, bars.right, bottom)
+                }
+                setRoomKeyboardMode(keyboard)
+                insets
+            }
+            root.requestApplyInsets()
+        } else {
+            window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            val visible = android.graphics.Rect()
+            root.viewTreeObserver.addOnGlobalLayoutListener {
+                root.getWindowVisibleDisplayFrame(visible)
+                val fullHeight = root.rootView.height
+                val obscured = fullHeight - visible.bottom
+                setRoomKeyboardMode(obscured > fullHeight * .18f)
+            }
+        }
+    }
+
+    /** Typing mode mein header/chat rehte hain; player/member blocks temporary collapse hote hain. */
+    private fun setRoomKeyboardMode(open: Boolean) {
+        if (roomKeyboardOpen == open) return
+        roomKeyboardOpen = open
+        keyboardCollapseViews.forEach { it.visibility = if (open) View.GONE else View.VISIBLE }
+        if (open && ::partyRv.isInitialized) partyRv.post { scrollPartyBottom() }
     }
 
     private fun buildHeader(): View {
@@ -544,6 +596,7 @@ class PartyRoomActivity : Activity(), ChatHost {
             leftMargin = dp(6f)
         })
         members.addView(chip, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(25f)).apply { topMargin = dp(3f) })
+        keyboardCollapseViews.add(members)
         chat.addView(members, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(59f)))
 
         chat.addView(TextView(this).apply {
