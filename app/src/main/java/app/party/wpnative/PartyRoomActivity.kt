@@ -28,6 +28,9 @@ import android.widget.Toast
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+/** Sirf Room ke 💬 se khule Inbox ko isi live Room par wapas laane ka route marker. */
+const val EXTRA_RETURN_TO_PARTY_ROOM = "opened_from_party_room"
+
 /**
  * Enter Party ke baad wali **native Party Room** screen.
  *
@@ -167,7 +170,7 @@ class PartyRoomActivity : Activity() {
                 // isliye Android back/gesture naturally isi Room par wapas laata hai.
                 // Baqi jagah se Inbox khulne ka route bilkul nahi badalta.
                 startActivity(Intent(this@PartyRoomActivity, InboxActivity::class.java)
-                    .putExtra("opened_from_party_room", true))
+                    .putExtra(EXTRA_RETURN_TO_PARTY_ROOM, true))
                 overridePendingTransition(0, 0)
             }
         }

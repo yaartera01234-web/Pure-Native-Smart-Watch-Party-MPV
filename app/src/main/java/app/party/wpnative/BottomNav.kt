@@ -88,7 +88,20 @@ fun buildBottomNav(act: Activity, active: String): View {
             setOnClickListener {
                 if (on) return@setOnClickListener
                 when (key) {
-                    "party" -> open(PartyLobbyActivity::class.java)
+                    "party" -> {
+                        // Agar yeh DM Party Room ke apne 💬 se khula tha to nayi
+                        // Lobby/Room mat banao. Wahi live Room neeche stack mein hai:
+                        // finish se usi ka theme, animations aur poora UI jaisa tha
+                        // waisa hi saamne aa jata hai. Normal Inbox ka Party route
+                        // pehle ki tarah Lobby hi kholta hai.
+                        if (act is InboxActivity &&
+                            act.intent.getBooleanExtra(EXTRA_RETURN_TO_PARTY_ROOM, false)) {
+                            act.finish()
+                            act.overridePendingTransition(0, 0)
+                        } else {
+                            open(PartyLobbyActivity::class.java)
+                        }
+                    }
                     "chat" -> open(InboxActivity::class.java)
                     "call" -> open(CallsActivity::class.java)
                 }
