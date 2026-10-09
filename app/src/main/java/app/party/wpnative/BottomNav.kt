@@ -43,10 +43,20 @@ fun buildBottomNav(act: Activity, active: String): View {
     frame.background = LayerDrawable(arrayOf(fillLayer, glossLayer))
     frame.clipToOutline = true
 
+    /**
+     * Tab badlo — **purani screen ko tod kar nayi mat banao**.
+     *
+     * Pehle har tap par `finish()` karke nayi Activity ban ti thi -> poori screen
+     * (header + search + list + nav + gradients) dobara banti thi -> 80-200ms ka jhatka.
+     * Ab CLEAR_TOP + SINGLE_TOP se wahi purani screen turant aage aa jati hai
+     * (uske upar wali hat jati hai, to back-history bhi saaf rahti hai).
+     */
     fun open(target: Class<*>) {
-        act.startActivity(Intent(act, target))
+        val i = Intent(act, target).addFlags(
+            Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        )
+        act.startActivity(i)
         act.overridePendingTransition(0, 0)
-        act.finish()
     }
 
     val row = LinearLayout(act).apply {

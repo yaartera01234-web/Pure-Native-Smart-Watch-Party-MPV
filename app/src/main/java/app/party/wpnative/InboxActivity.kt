@@ -64,11 +64,22 @@ class InboxActivity : Activity() {
         }
     }
 
+    private var listSig = ""
+
     override fun onResume() {
         super.onResume()
-        // Chat screen se koi friend remove hua ho to list turant saaf ho jaye
-        if (::listBox.isInitialized) fillInbox()
+        // Chat screen se koi friend remove hua ho to list turant saaf ho jaye —
+        // magar kuch na badla ho to bekaar dobara mat banao (tab badalte waqt jhatka na ho)
+        if (::listBox.isInitialized && listSignature() != listSig) {
+            listSig = listSignature()
+            fillInbox()
+        }
     }
+
+    /** List ka "naksha" — is se pata chalta hai ke dobara banane ki zarurat hai ya nahi. */
+    private fun listSignature(): String =
+        Friends.all(this).joinToString(",") + "#" +
+            chats.joinToString(",") { "${it.name}:${it.pinned}:${it.last}:${it.unread}" }
 
     private fun buildScreen(): View {
         val root = FrameLayout(this)
@@ -99,6 +110,7 @@ class InboxActivity : Activity() {
         })
         listBox = list
         fillInbox()
+        listSig = listSignature()      // abhi ban chuki -> onResume mein bekaar na bane
 
         val scroll = ScrollView(this).apply { addView(list) }
         col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
