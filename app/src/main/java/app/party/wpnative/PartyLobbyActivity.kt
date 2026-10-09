@@ -26,7 +26,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -117,10 +116,10 @@ class PartyLobbyActivity : Activity() {
             isClickable = true
             isFocusable = true
             setOnClickListener {
-                // Agla step actual synchronized player/party room hai. Lobby apni
-                // screenshot state mein rahe; koi jhoota joined state save nahi hota.
-                Toast.makeText(this@PartyLobbyActivity,
-                    "Party room agle step mein khulega", Toast.LENGTH_SHORT).show()
+                // Ab native Party Room khulti hai. MPV/player engine baad ke final
+                // player batch mein uske reserved 16:9 box ke andar lagega.
+                startActivity(Intent(this@PartyLobbyActivity, PartyRoomActivity::class.java))
+                overridePendingTransition(0, 0)
             }
         }
         cta.addPercent(enter, .055f, .1208f, .89f, .8448f)
