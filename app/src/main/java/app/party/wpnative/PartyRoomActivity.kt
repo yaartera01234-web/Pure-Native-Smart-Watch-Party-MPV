@@ -12,8 +12,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RadialGradient
@@ -260,10 +258,9 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     override fun onBackPressed() {
         if (leavingParty) return
         AlertDialog.Builder(this)
-            .setTitle("🚪 Party se Left?")
-            .setMessage("Aapki Room chat is phone se foran clear hogi. Baqi members ki chat aur saved playlist rahegi.")
-            .setNegativeButton("Nahi", null)
-            .setPositiveButton("Left") { _, _ -> leavePartyNow() }
+            .setTitle("🚪 Party Left?")
+            .setNegativeButton("No", null)
+            .setPositiveButton("Yes") { _, _ -> leavePartyNow() }
             .show()
     }
 
@@ -916,18 +913,18 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        // Website mobile row bilkul simple hai: 18px emoji, transparent button,
-        // 6px gap aur sirf halki 1.08 saturation — koi white glow/chip/elevation nahi.
-        val websiteEmojiColor = ColorMatrix().apply { setSaturation(1.08f) }
+        // Screenshot wali website row ka native visual match: Color Emoji ko opaque
+        // white paint milta hai (warna Material ka inherited text alpha usay dim karta
+        // hai), glyph 20sp aur har centre ke darmiyan qareeban website wala 30dp step.
         listOf("😂", "❤️", "🔥", "😭", "👏", "🥳", "👍").forEach { e ->
             emojis.addView(TextView(this).apply {
                 text = e
-                textSize = 18f
+                textSize = 20f
+                setTextColor(Color.WHITE)
                 gravity = Gravity.CENTER
-                paint.colorFilter = ColorMatrixColorFilter(websiteEmojiColor)
                 contentDescription = "Message mein $e lagao"
                 setOnClickListener { appendPartyEmoji(e) }
-            }, lp(dp(30f), dp(36f)).apply { rightMargin = dp(6f) })
+            }, lp(dp(24f), dp(36f)).apply { rightMargin = dp(6f) })
         }
         // GIF nahi: baad mein keyboard/Gboard se direct send setup hoga.
         emojis.addView(partyMediaIcon("photo", intArrayOf(
