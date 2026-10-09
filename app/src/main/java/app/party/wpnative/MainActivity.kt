@@ -280,7 +280,7 @@ class MainActivity : Activity() {
                 } else {
                     // Yahi naam chat ki pehchaan hai (doston ko bhi yahi dikhega)
                     WpUser.setName(this@MainActivity, n)
-                    FirebaseChat.setPresence(this, n, true)
+                    FirebaseChat.setPresence(this@MainActivity, n, true)
                     // Join ke baad next page: Messages (Inbox)
                     startActivity(Intent(this@MainActivity, InboxActivity::class.java))
                 }
