@@ -1,6 +1,8 @@
 package app.party.wpnative
 
+import android.animation.ValueAnimator
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
@@ -16,6 +18,7 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.LinearInterpolator
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -34,20 +37,49 @@ import kotlin.math.roundToInt
  */
 class PartyRoomActivity : Activity() {
 
-    private data class Palette(val bg: IntArray, val accent: IntArray)
+    /** party-final1.html ke exact page/panel/header/input rang — sirf generic pale tint nahi. */
+    private data class Palette(
+        val name: String,
+        val page: IntArray,
+        val accent: IntArray,
+        val glowA: Int,
+        val glowB: Int,
+        val panel: IntArray,
+        val head: IntArray,
+        val input: IntArray
+    )
 
     private val prefs by lazy { getSharedPreferences("wp_native", Context.MODE_PRIVATE) }
     private val palettes by lazy {
         listOf(
-            Palette(cols("#050719", "#16112d", "#0b1829"), cols("#fa35de", "#c03cff", "#36d9fa")),
-            Palette(cols("#0f0c29", "#302b63", "#24243e"), cols("#ff66bd", "#a477ff", "#55baff")),
-            Palette(cols("#051219", "#11232d", "#0b2927"), cols("#358efa", "#3cb7ff", "#36faed")),
-            Palette(cols("#19050c", "#2d111b", "#29180b"), cols("#fa3549", "#ff3c83", "#fa8e36")),
-            Palette(cols("#05190f", "#112d1f", "#0b2729"), cols("#35fac5", "#3cff9e", "#36eafa")),
-            Palette(cols("#191305", "#2d2511", "#29270b"), cols("#e88f47", "#eabc51", "#e8db48"))
+            Palette("Lobby Neon", cols("#050719", "#0b1327", "#050719"),
+                cols("#fa35de", "#c03cff", "#36d9fa"), hex("#42721d75"), hex("#3d146183"),
+                cols("#e81e1431", "#e80d1d33"), cols("#ed231036", "#ed111b34"),
+                cols("#ff2a153c", "#ff132a40")),
+            Palette("Night Purple", cols("#080812", "#17132f", "#0a1127"),
+                cols("#ff66bd", "#a477ff", "#55baff"), hex("#3dff64c3"), hex("#3d5b7eff"),
+                cols("#b81c183b", "#8c080918"), cols("#94060713", "#94060713"),
+                cols("#78080818", "#78080818")),
+            Palette("Ocean Cyan", cols("#051219", "#082129", "#051219"),
+                cols("#358efa", "#3cb7ff", "#36faed"), hex("#421d5575"), hex("#3d14837c"),
+                cols("#e8142631", "#e80d3330"), cols("#ed102836", "#ed113432"),
+                cols("#ff152e3c", "#ff13403d")),
+            Palette("Sunset Rose", cols("#19050c", "#261018", "#19050c"),
+                cols("#fa3549", "#ff3c83", "#fa8e36"), hex("#42751d3d"), hex("#3d834614"),
+                cols("#e831141f", "#e8331e0d"), cols("#ed36101e", "#ed342111"),
+                cols("#ff3c1523", "#ff402713")),
+            Palette("Emerald Glow", cols("#05190f", "#0a271d", "#05190f"),
+                cols("#35fac5", "#3cff9e", "#36eafa"), hex("#421d7549"), hex("#3d147a83"),
+                cols("#e8143123", "#e80d3033"), cols("#ed103623", "#ed113134"),
+                cols("#ff153c29", "#ff133c40")),
+            Palette("Champagne Gold", cols("#191305", "#28210d", "#191305"),
+                cols("#e88f47", "#eabc51", "#e8db48"), hex("#42755b1d"), hex("#3d837a14"),
+                cols("#e8312814", "#e833300d"), cols("#ed362b10", "#ed343111"),
+                cols("#ff3c3015", "#ff403c13"))
         )
     }
-    private val palette by lazy { palettes[prefs.getInt("theme", 1).coerceIn(palettes.indices)] }
+    private var themeIndex = 1
+    private val palette: Palette get() = palettes[themeIndex]
 
     private fun dp(v: Float): Int = (v * resources.displayMetrics.density).roundToInt()
     private fun hex(v: String): Int = Color.parseColor(v)
@@ -56,6 +88,7 @@ class PartyRoomActivity : Activity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        themeIndex = prefs.getInt("theme", 1).coerceIn(palettes.indices)
         window.statusBarColor = Color.BLACK
         window.navigationBarColor = Color.BLACK
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
@@ -63,7 +96,7 @@ class PartyRoomActivity : Activity() {
     }
 
     private fun buildRoom(): View {
-        val root = PartyRoomBackdrop(this, palette.bg, palette.accent)
+        val root = PartyRoomBackdrop(this, palette.page, palette.glowA, palette.glowB)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(buildHeader(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -97,7 +130,9 @@ class PartyRoomActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
-            background = roundBox(Color.argb(148, 6, 7, 19), Color.argb(33, 255, 255, 255), 0f, 1f)
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, palette.head).apply {
+                setStroke(dp(1f), Color.argb(33, 255, 255, 255))
+            }
             elevation = dp(2f).toFloat()
         }
 
@@ -128,14 +163,19 @@ class PartyRoomActivity : Activity() {
         val chat = headerButton("💬").apply {
             contentDescription = "Messages"
             setOnClickListener {
-                startActivity(Intent(this@PartyRoomActivity, InboxActivity::class.java).addFlags(
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                // Yahan CLEAR_TOP bilkul nahi: Room ke upar ek Inbox khulta hai,
+                // isliye Android back/gesture naturally isi Room par wapas laata hai.
+                // Baqi jagah se Inbox khulne ka route bilkul nahi badalta.
+                startActivity(Intent(this@PartyRoomActivity, InboxActivity::class.java)
+                    .putExtra("opened_from_party_room", true))
                 overridePendingTransition(0, 0)
             }
         }
         bar.addView(chat, lp(dp(34f), dp(34f)).apply { leftMargin = dp(7f) })
-        bar.addView(headerButton("🎨").apply { contentDescription = "Theme" },
-            lp(dp(34f), dp(34f)).apply { leftMargin = dp(5f) })
+        bar.addView(headerButton("🎨").apply {
+            contentDescription = "Theme"
+            setOnClickListener { openThemePicker() }
+        }, lp(dp(34f), dp(34f)).apply { leftMargin = dp(5f) })
         return bar
     }
 
@@ -146,6 +186,103 @@ class PartyRoomActivity : Activity() {
         setTextColor(Color.WHITE)
         background = roundBox(Color.argb(31, 255, 255, 255),
             Color.argb(46, 255, 255, 255), 10f, 1f)
+    }
+
+    /** Header ke 🎨 ka real native picker; choice foran poore room par lagti aur save hoti hai. */
+    private fun openThemePicker() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12f), dp(12f), dp(12f), dp(10f))
+        }
+        box.addView(TextView(this).apply {
+            text = "🎨 Theme chuno"
+            textSize = 16f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        })
+        box.addView(TextView(this).apply {
+            text = "Poore Watch Party Room ka rang badalta hai"
+            textSize = 11f
+            setTextColor(hex("#c4b5fd"))
+        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(8f)
+        })
+
+        var dialog: AlertDialog? = null
+        var i = 0
+        while (i < palettes.size) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (j in 0..1) {
+                val index = i + j
+                if (index < palettes.size) {
+                    val p = palettes[index]
+                    val selected = index == themeIndex
+                    val card = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        gravity = Gravity.CENTER_HORIZONTAL
+                        setPadding(dp(7f), dp(7f), dp(7f), dp(8f))
+                        background = roundBox(
+                            Color.argb(if (selected) 54 else 20, 255, 255, 255),
+                            if (selected) p.accent[1] else Color.argb(42, 255, 255, 255),
+                            14f, if (selected) 2f else 1f)
+                        addView(View(this@PartyRoomActivity).apply {
+                            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                                if (index == 1) cols("#3a3170", "#241f4d") else p.accent).apply {
+                                cornerRadius = dp(9f).toFloat()
+                            }
+                        }, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(39f)))
+                        addView(TextView(this@PartyRoomActivity).apply {
+                            text = (if (selected) "✓ " else "") + p.name
+                            textSize = 11.5f
+                            gravity = Gravity.CENTER
+                            setTextColor(Color.WHITE)
+                            if (selected) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                            topMargin = dp(6f)
+                        })
+                        setOnClickListener {
+                            themeIndex = index
+                            prefs.edit().putInt("theme", themeIndex).apply()
+                            dialog?.dismiss()
+                            setContentView(buildRoom())
+                        }
+                    }
+                    row.addView(card, LinearLayout.LayoutParams(0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        setMargins(dp(4f), dp(4f), dp(4f), dp(4f))
+                    })
+                } else {
+                    row.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
+                }
+            }
+            box.addView(row, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            i += 2
+        }
+
+        val done = TextView(this).apply {
+            text = "✓ Theek hai"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(hex("#22c55e"), hex("#16a34a"))).apply {
+                cornerRadius = dp(13f).toFloat()
+            }
+        }
+        box.addView(done, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(45f)).apply {
+            setMargins(dp(4f), dp(10f), dp(4f), dp(2f))
+        })
+
+        val scroll = android.widget.ScrollView(this).apply { addView(box) }
+        val shownDialog = AlertDialog.Builder(this).setView(scroll).create()
+        dialog = shownDialog
+        done.setOnClickListener { shownDialog.dismiss() }
+        shownDialog.show()
+        shownDialog.window?.setBackgroundDrawable(roundBox(hex("#f50d0a20"),
+            Color.argb(70, 255, 255, 255), 20f, 1f))
+        shownDialog.window?.setLayout((resources.displayMetrics.widthPixels * .94f).roundToInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
     private fun buildSourceRow(): View {
@@ -161,8 +298,7 @@ class PartyRoomActivity : Activity() {
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             setPadding(dp(12f), 0, dp(9f), 0)
-            background = roundBox(Color.argb(120, 4, 5, 17),
-                Color.argb(36, 255, 255, 255), 12f, 1f)
+            background = themedInput(12f)
         }
         row.addView(input, LinearLayout.LayoutParams(0, dp(44f), 1f))
 
@@ -331,8 +467,7 @@ class PartyRoomActivity : Activity() {
             maxLines = 1
             setSingleLine(true)
             setPadding(dp(13f), 0, dp(13f), 0)
-            background = roundBox(Color.argb(87, 3, 4, 15),
-                Color.argb(42, 255, 255, 255), 23f, 1f)
+            background = themedInput(23f)
         }, LinearLayout.LayoutParams(0, dp(43f), 1f))
         inputRow.addView(TextView(this).apply {
             text = "➤"
@@ -364,10 +499,15 @@ class PartyRoomActivity : Activity() {
     }
 
     private fun glassBox(radius: Float): GradientDrawable =
-        GradientDrawable(GradientDrawable.Orientation.TL_BR,
-            intArrayOf(Color.argb(184, 28, 24, 59), Color.argb(160, 8, 9, 24))).apply {
+        GradientDrawable(GradientDrawable.Orientation.TL_BR, palette.panel).apply {
             cornerRadius = dp(radius).toFloat()
             setStroke(dp(1f), Color.argb(35, 255, 255, 255))
+        }
+
+    private fun themedInput(radius: Float): GradientDrawable =
+        GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, palette.input).apply {
+            cornerRadius = dp(radius).toFloat()
+            setStroke(dp(1f), Color.argb(38, 255, 255, 255))
         }
 
     private fun roundBox(fill: Int, stroke: Int, radius: Float, strokeDp: Float): GradientDrawable =
@@ -384,8 +524,10 @@ private class RavePlayerSlot(ctx: Context) : FrameLayout(ctx) {
         contentDescription = "Video player"
         background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
             intArrayOf(Color.BLACK, Color.rgb(5, 5, 12), Color.BLACK)).apply {
-            setStroke((resources.displayMetrics.density).roundToInt(), Color.argb(38, 255, 255, 255))
+            cornerRadius = 19f * resources.displayMetrics.density
+            setStroke((resources.displayMetrics.density).roundToInt(), Color.argb(41, 255, 255, 255))
         }
+        clipToOutline = true
     }
 
     override fun onMeasure(widthSpec: Int, heightSpec: Int) {
@@ -398,29 +540,29 @@ private class RavePlayerSlot(ctx: Context) : FrameLayout(ctx) {
     }
 }
 
-/** Selected theme ka native aurora + tiny-star background. */
+/** Selected website theme ka exact dark page base, aurora glows aur subtle 5px texture. */
 private class PartyRoomBackdrop(
     ctx: Context,
-    private val bg: IntArray,
-    private val accent: IntArray
+    private val page: IntArray,
+    private val glowA: Int,
+    private val glowB: Int
 ) : FrameLayout(ctx) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     init { setWillNotDraw(false) }
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
-        p.shader = LinearGradient(0f, 0f, w, h, bg, null, Shader.TileMode.CLAMP)
+        p.shader = LinearGradient(0f, 0f, w, h, page, null, Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, w, h, p)
-        p.shader = RadialGradient(w * .08f, 0f, w * .72f,
-            Color.argb(55, Color.red(accent[0]), Color.green(accent[0]), Color.blue(accent[0])),
-            Color.TRANSPARENT, Shader.TileMode.CLAMP)
-        c.drawRect(0f, 0f, w, h * .65f, p)
-        p.shader = RadialGradient(w, 0f, w * .66f,
-            Color.argb(48, Color.red(accent[2]), Color.green(accent[2]), Color.blue(accent[2])),
-            Color.TRANSPARENT, Shader.TileMode.CLAMP)
-        c.drawRect(0f, 0f, w, h * .62f, p)
+        p.shader = RadialGradient(w * .08f, -h * .02f, w * .76f,
+            glowA, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, w, h * .66f, p)
+        p.shader = RadialGradient(w, 0f, w * .72f,
+            glowB, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, w, h * .64f, p)
         p.shader = null
-        p.color = Color.argb(24, 255, 255, 255)
+        // HTML ka rgba(255,255,255,.05) dot texture: pehle wali double opacity nahi.
+        p.color = Color.argb(13, 255, 255, 255)
         val step = resources.displayMetrics.density * 5f
         var y = step
         var row = 0
@@ -432,19 +574,51 @@ private class PartyRoomBackdrop(
     }
 }
 
-/** Original SVG ke 5 cyan-purple-pink equalizer bars. */
+/** Original CSS wpWave: 5 bars bottom se 45%↔100%, har bar 150ms offset. */
 private class PartyBarsLogo(ctx: Context) : View(ctx) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bars = arrayOf(
+        floatArrayOf(2.4f, 8f, 13f), floatArrayOf(6.7f, 5f, 16f),
+        floatArrayOf(11f, 2.6f, 18.4f), floatArrayOf(15.3f, 6.4f, 14.6f),
+        floatArrayOf(19.6f, 9.6f, 11.4f)
+    )
     private val colors = intArrayOf(
         Color.parseColor("#54e8ff"), Color.parseColor("#8b72ff"), Color.parseColor("#ff5ebc"),
         Color.parseColor("#8b72ff"), Color.parseColor("#54e8ff"))
+    private val delays = floatArrayOf(0f, 150f, 300f, 450f, 600f)
+    private var tick = 0f
+    private val wave = ValueAnimator.ofFloat(0f, 1800f).apply {
+        duration = 1800L
+        repeatCount = ValueAnimator.INFINITE
+        interpolator = LinearInterpolator()
+        addUpdateListener {
+            tick = it.animatedValue as Float
+            postInvalidateOnAnimation()
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (!wave.isStarted) wave.start()
+    }
+
+    override fun onDetachedFromWindow() {
+        wave.cancel()
+        super.onDetachedFromWindow()
+    }
+
     override fun onDraw(c: Canvas) {
         val sx = width / 24f; val sy = height / 24f
-        val tops = floatArrayOf(8f, 5f, 2.6f, 6.4f, 9.6f)
-        for (i in 0..4) {
+        for (i in bars.indices) {
+            val b = bars[i]
+            val phase = (tick + delays[i]) % 1800f
+            val linear = if (phase <= 900f) phase / 900f else (1800f - phase) / 900f
+            val eased = (1f - Math.cos(linear * Math.PI).toFloat()) / 2f
+            val scale = .45f + .55f * eased
+            val bottom = b[1] + b[2]
+            val top = bottom - b[2] * scale
             p.color = colors[i]
-            val l = (2.4f + i * 4.3f) * sx
-            c.drawRoundRect(RectF(l, tops[i] * sy, l + 2.7f * sx, 21f * sy),
+            c.drawRoundRect(RectF(b[0] * sx, top * sy, (b[0] + 2.7f) * sx, bottom * sy),
                 1.35f * sx, 1.35f * sx, p)
         }
     }
