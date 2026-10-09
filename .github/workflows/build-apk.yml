@@ -2,7 +2,8 @@ name: "WP Native first page - build APK"
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, "arena/**" ]
+  pull_request:
   workflow_dispatch:
 
 permissions:
