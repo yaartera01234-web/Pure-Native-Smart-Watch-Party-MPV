@@ -330,7 +330,8 @@ class ChatActivity : Activity() {
             text = m.text
             textSize = 14f
             setTextColor(if (m.own) Color.WHITE else hex("#f3efff"))
-            setLineSpacing(0f, 1.45f)
+            includeFontPadding = true
+            setLineSpacing(0f, 1.55f)
         })
         // Swipe karte waqt ↩ wala nishan (website .swh4) — bubble ke bahar, swipe wali taraf
         val handle = TextView(this).apply {
@@ -571,8 +572,9 @@ class ChatActivity : Activity() {
                 setTypeface(typeface, Typeface.BOLD)
                 setTextColor(Color.WHITE)      // dim dikhne ki wajah: text color set hi nahi tha
                 gravity = Gravity.CENTER
-                minHeight = dp(24)
-                setPadding(dp(9), dp(2), dp(9), dp(2))
+                minHeight = dp(28)
+                setPadding(dp(9), dp(4), dp(9), dp(4))
+                includeFontPadding = true
                 background = GradientDrawable().apply {
                     setColor(if (mine) Color.argb(150, 244, 114, 182) else Color.argb(235, 34, 26, 62))
                     cornerRadius = dp(12).toFloat()
@@ -623,10 +625,10 @@ class ChatActivity : Activity() {
         }
         pill.addView(iconBtn("photo", intArrayOf(hex("#f59e0b"), hex("#ec4899"), hex("#8b5cf6"))) {
             Toast.makeText(this@ChatActivity, "Photo agle step mein", Toast.LENGTH_SHORT).show()
-        }, lp(dp(34), dp(34)).apply { rightMargin = dp(4) })
+        }, lp(dp(36), dp(36)).apply { rightMargin = dp(4) })
         pill.addView(iconBtn("mic", intArrayOf(hex("#06b6d4"), hex("#3b82f6"), hex("#8b5cf6"))) {
             Toast.makeText(this@ChatActivity, "Voice message agle step mein", Toast.LENGTH_SHORT).show()
-        }, lp(dp(34), dp(34)).apply { rightMargin = dp(4) })
+        }, lp(dp(36), dp(36)).apply { rightMargin = dp(4) })
 
         input = EditText(this).apply {
             hint = "Message likho..."
@@ -634,6 +636,8 @@ class ChatActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 13f
             gravity = Gravity.CENTER_VERTICAL      // emoji upar na kate
+            includeFontPadding = true                 // emoji font ke ascent/descent ke liye jagah
+            minHeight = dp(40)
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             background = null
@@ -642,8 +646,9 @@ class ChatActivity : Activity() {
                 if (actionId == EditorInfo.IME_ACTION_SEND) { send(); true } else false
             }
         }
-        pill.addView(input, LinearLayout.LayoutParams(0, dp(38), 1f).apply { leftMargin = dp(4) })
-        row.addView(pill, LinearLayout.LayoutParams(0, dp(42), 1f))
+        // fixed height ki jagah poori pill ki unchai -> emoji upar se bilkul na kate
+        pill.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { leftMargin = dp(4) })
+        row.addView(pill, LinearLayout.LayoutParams(0, dp(46), 1f))
 
         // ➤ send
         row.addView(TextView(this).apply {
@@ -655,7 +660,7 @@ class ChatActivity : Activity() {
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
                 intArrayOf(hex("#a855f7"), hex("#22d3ee"))).apply { shape = GradientDrawable.OVAL }
             setOnClickListener { send() }
-        }, lp(dp(42), dp(42)).apply { leftMargin = dp(8) })
+        }, lp(dp(46), dp(46)).apply { leftMargin = dp(8) })
 
         bar.addView(row, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return bar
@@ -878,10 +883,11 @@ class ChatActivity : Activity() {
         listOf("❤️", "😂", "😮", "😢", "👍", "🔥").forEach { e ->
             emoRow.addView(TextView(this).apply {
                 text = e
-                textSize = 19f
+                textSize = 20f
                 gravity = Gravity.CENTER
+                includeFontPadding = true
                 setOnClickListener { toggleRx(m, e); dlg.dismiss() }
-            }, lp(dp(33), dp(33)).apply { marginEnd = dp(2) })
+            }, lp(dp(36), dp(36)).apply { marginEnd = dp(2) })
         }
         // ➕ : keyboard se apni marzi ka emoji (website .rx4more)
         emoRow.addView(TextView(this).apply {
@@ -895,7 +901,7 @@ class ChatActivity : Activity() {
             }
             // sheet band hone ke baad patti khule (warna keyboard focus nahi leta)
             setOnClickListener { dlg.dismiss(); window.decorView.postDelayed({ openEmojiBox(m) }, 150) }
-        }, lp(dp(33), dp(33)))
+        }, lp(dp(36), dp(36)))
         sheet.addView(emoRow, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(10)
         })
