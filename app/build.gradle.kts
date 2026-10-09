@@ -41,5 +41,6 @@ dependencies {
     // Firebase (BoM = sab libraries ke versions apne aap match)
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-firestore")   // messages + presence + typing
+    implementation("androidx.recyclerview:recyclerview:1.3.2")   // smooth list (Instagram jaisi)
     implementation("com.google.firebase:firebase-messaging")   // push (agle step mein)
 }

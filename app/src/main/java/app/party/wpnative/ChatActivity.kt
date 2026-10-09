@@ -38,6 +38,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.recyclerview.widget.DefaultItemAnimator
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.google.firebase.firestore.ListenerRegistration
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -59,23 +62,9 @@ import java.util.Locale
  *
  * Abhi demo data hai (in-memory). Asli E2E chat agle step mein.
  */
-class ChatActivity : Activity() {
+class ChatActivity : Activity(), ChatHost {
 
     /** Ek message. rx = emoji -> kya wo meri reaction hai. fid = Firebase wali id. */
-    private class Msg(
-        val id: Int,
-        val text: String,
-        val own: Boolean,
-        val time: String,
-        val day: String,
-        var read: Boolean = false,
-        var replyName: String = "",
-        var replyText: String = "",
-        val rx: LinkedHashMap<String, Boolean> = LinkedHashMap(),
-        var fid: String = "",        // Firestore document id (dobara na aaye is liye)
-        var ts: Long = 0L            // asli waqt (pagination isi se hoti hai)
-    )
-
     private var peer = "Dost"
     private var peerColor = 0
     private val msgs = mutableListOf<Msg>()
@@ -103,8 +92,10 @@ class ChatActivity : Activity() {
     /** Kitne messages ek baar mein (chat khulte hi) aur upar scroll par. */
     private val PAGE = 20L
 
-    private lateinit var threadBox: LinearLayout
-    private lateinit var scroll: ScrollView
+    private lateinit var rv: RecyclerView
+    private lateinit var lm: LinearLayoutManager
+    private lateinit var ad: ChatAdapter
+    private val RAM_MAX = 300        // screen/RAM mein itne messages (340 hon to purane trim)
     private lateinit var input: EditText
     private lateinit var replyBar: LinearLayout
     private lateinit var replyWrap: FrameLayout
@@ -125,8 +116,8 @@ class ChatActivity : Activity() {
         }
     }
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-    private fun hex(s: String): Int = Color.parseColor(s)
+    override fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    override fun hex(s: String): Int = Color.parseColor(s)
     private fun lp(w: Int, h: Int): LinearLayout.LayoutParams = LinearLayout.LayoutParams(w, h)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -196,21 +187,27 @@ class ChatActivity : Activity() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(buildHeader(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        threadBox = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            // website #dm-thread: justify-content: flex-end -> kam messages neeche se chipke
-            gravity = Gravity.BOTTOM
+        // ===== Messages ki list: RecyclerView (sirf nazar aane wali lines banti hain) =====
+        rv = RecyclerView(this).apply {
+            lm = LinearLayoutManager(this@ChatActivity).apply { stackFromEnd = true }
+            layoutManager = lm
+            ad = ChatAdapter(this@ChatActivity)
+            adapter = ad
             setPadding(dp(11), dp(12), dp(11), dp(8))
+            clipChildren = false
+            clipToPadding = false
+            setHasFixedSize(true)
+            itemAnimator = DefaultItemAnimator().apply {
+                addDuration = 180L; moveDuration = 180L; changeDuration = 120L; removeDuration = 150L
+            }
+            // Upar scroll karte hi purane 20 messages (pagination)
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(r: RecyclerView, dx: Int, dy: Int) {
+                    if (lm.findFirstVisibleItemPosition() <= 0) loadOlderPage()
+                }
+            })
         }
-        scroll = ScrollView(this).apply {
-            isFillViewport = true
-            addView(threadBox)
-        }
-        // Upar scroll -> purane 20 messages (pagination, hang-free)
-        scroll.setOnScrollChangeListener { _, _, _, _, _ ->
-            if (scroll.scrollY <= 4) loadOlderPage()
-        }
-        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        col.addView(rv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         // Reply patti: website ke #dm-rep4 ki tarah — composer ke theek upar
         buildReplyBar()
@@ -344,306 +341,12 @@ class ChatActivity : Activity() {
 
     // ============================ THREAD ============================
 
-    private fun renderThread() {
-        threadBox.removeAllViews()
-
-        if (msgs.isEmpty()) {
-            threadBox.addView(emptyState(),
-                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(40) })
-            if (typingOn) addTypingRow((resources.displayMetrics.widthPixels * 0.85f).toInt())
-            return
-        }
-
-        val rowW = (resources.displayMetrics.widthPixels * 0.85f).toInt()
-        var lastDay = ""
-        msgs.forEach { m ->
-            if (m.day != lastDay) {
-                lastDay = m.day
-                threadBox.addView(TextView(this).apply {
-                    text = m.day
-                    textSize = 10.5f
-                    setTypeface(typeface, Typeface.BOLD)
-                    setTextColor(Color.argb(140, 255, 255, 255))
-                }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    gravity = Gravity.CENTER_HORIZONTAL
-                    setMargins(0, dp(4), 0, dp(2))
-                })
-            }
-            val row = buildRow(m)
-            // Naya message: thoda sa neeche se upar aata hai (website wpMessageIn 180ms)
-            if (m.id == animId) {
-                animId = -1
-                row.alpha = 0f
-                row.translationY = dp(7).toFloat()
-                row.animate().alpha(1f).translationY(0f).setDuration(180L).start()
-            }
-            threadBox.addView(row, lp(rowW, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                gravity = if (m.own) Gravity.END else Gravity.START
-                bottomMargin = dp(10)
-            })
-        }
-
-        // Doosra wala likh raha ho to sabse neeche Instagram wale 3 dots
-        if (typingOn) addTypingRow(rowW)
-    }
-
-    /** Typing wali row ko thread ke aakhir mein lagata hai. */
-    private fun addTypingRow(rowW: Int) {
-        threadBox.addView(buildTypingRow(), lp(rowW, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            gravity = Gravity.START
-            bottomMargin = dp(10)
-        })
-    }
-
-    /**
-     * Instagram wala typing indicator: peer ka avatar + usi jaise bubble ke andar 3 hilte dots.
-     * (Website #dm-typing ke dots se banaya, sample dekh kar yahi style chuna gaya.)
-     */
-    private fun buildTypingRow(): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM or Gravity.START
-        }
-
-        // Avatar (bilkul message wali row jaisa)
-        row.addView(TextView(this).apply {
-            text = peer.first().uppercase()
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(peerColor) }
-        }, lp(dp(34), dp(34)))
-
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.START
-        }
-        // Naam (message wali rows ki tarah)
-        col.addView(TextView(this).apply {
-            text = peer
-            textSize = 11f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(peerColor)
-            alpha = 0.8f
-            setSingleLine(true)
-            setPadding(dp(8), 0, 0, 0)
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(2) })
-
-        // Bubble: doosre wale ke bubble jaisa (radius 22, halka glassy) + andar 3 dots
-        val dots = TypingDots(this)
-        val bubble = FrameLayout(this).apply {
-            setPadding(dp(16), dp(11), dp(16), dp(11))
-            background = roundBox(Color.argb(23, 255, 255, 255), Color.argb(36, 255, 255, 255), 22, 1)
-            addView(dots, FrameLayout.LayoutParams(dots.desiredWidth(), dots.desiredHeight(), Gravity.START))
-        }
-        // Bubble ki jagah bilkul message wali row jaisi (avatar se 8dp door)
-        col.addView(bubble, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-        row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
-        return row
-    }
-
     /** Dots dikhane/chhupane ka switch — asli chat mein server ke signal se chalega. */
     private fun setTyping(on: Boolean) {
         if (typingOn == on) return
         typingOn = on
         renderThread()
         if (on) scrollBottom()
-    }
-
-    /** Ek message ki row: [avatar] [naam + bubble + reactions + time] (apna = ulti taraf). */
-    private fun buildRow(m: Msg): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM or (if (m.own) Gravity.END else Gravity.START)
-        }
-
-        // --- bubble ke upar naam ---
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = if (m.own) Gravity.END else Gravity.START
-        }
-        col.addView(TextView(this).apply {
-            text = if (m.own) "You" else peer
-            textSize = 11f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(if (m.own) hex("#f9a8d4") else peerColor)
-            alpha = 0.8f
-            setSingleLine(true)
-            setPadding(if (m.own) 0 else dp(8), 0, if (m.own) dp(8) else 0, 0)
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(2) })
-
-        // --- bubble ---
-        val bubble = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = if (m.own) {
-                GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                    intArrayOf(hex("#5b21b6"), hex("#9333ea"), hex("#db2777"))).apply { cornerRadius = dp(22).toFloat() }
-            } else {
-                roundBox(Color.argb(23, 255, 255, 255), Color.argb(36, 255, 255, 255), 22, 1)
-            }
-            if (m.own) elevation = dp(6).toFloat()
-            setOnLongClickListener { showMsgActions(m); true }
-        }
-
-        // bubble ke andar: (reply quote) + text
-        if (m.replyText.isNotBlank()) bubble.addView(quoteBlock(m),
-            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(5) })
-        bubble.addView(TextView(this).apply {
-            text = m.text
-            textSize = 14f
-            setTextColor(if (m.own) Color.WHITE else hex("#f3efff"))
-            includeFontPadding = true
-            setLineSpacing(0f, 1.55f)
-        })
-        // Swipe karte waqt ↩ wala nishan (website .swh4) — bubble ke bahar, swipe wali taraf
-        val handle = TextView(this).apply {
-            text = "↩"
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            alpha = 0f
-            scaleX = 0.7f
-            scaleY = 0.7f
-            background = swipeHandleBg(false)
-        }
-        val bubbleWrap = FrameLayout(this).apply {
-            clipChildren = false
-            val side = if (m.own) Gravity.END else Gravity.START
-            addView(bubble, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER_VERTICAL or side))
-            addView(handle, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER_VERTICAL or side).apply {
-                if (m.own) rightMargin = -dp(30) else leftMargin = -dp(30)
-            })
-        }
-        col.clipChildren = false
-        row.clipChildren = false
-        threadBox.clipChildren = false
-        scroll.clipChildren = false
-        col.addView(bubbleWrap, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-        // --- reactions (chhoti chips) ---
-        if (m.rx.isNotEmpty()) col.addView(buildChips(m),
-            lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
-
-        // --- time + ✓✓ ---
-        col.addView(TextView(this).apply {
-            text = timeWithTick(m)
-            textSize = 9.5f
-            setPadding(if (m.own) 0 else dp(8), 0, if (m.own) dp(8) else 0, 0)
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(3)
-            gravity = if (m.own) Gravity.END else Gravity.START
-        })
-
-        // --- avatar ---
-        val av = TextView(this).apply {
-            text = if (m.own) "Y" else peer.first().uppercase()
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = if (m.own) {
-                GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                    intArrayOf(hex("#ff5ebc"), hex("#a855f7"))).apply { shape = GradientDrawable.OVAL }
-            } else {
-                GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(peerColor) }
-            }
-        }
-
-        if (m.own) {
-            row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
-            row.addView(av, lp(dp(34), dp(34)))
-        } else {
-            row.addView(av, lp(dp(34), dp(34)))
-            row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
-        }
-        bindSwipe(row, bubble, m, handle)
-        return row
-    }
-
-    /**
-     * Swipe karke reply (website ka d4bind):
-     * dayen swipe -> 12dp par pakad, zyada se zyada 110dp slide,
-     * 60dp se zyada par chhodne par reply set, 200ms mein wapas.
-     */
-    private fun bindSwipe(row: View, touchOn: View, m: Msg, handle: TextView) {
-        val startAt = dp(12).toFloat()
-        val maxSlide = dp(110).toFloat()
-        val fireAt = dp(60).toFloat()
-        var sx = 0f
-        var sy = 0f
-        var dx = 0f
-        var swiping = false
-
-        val listener = View.OnTouchListener { v, ev ->
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    sx = ev.rawX; sy = ev.rawY; dx = 0f; swiping = false
-                    false                       // tap / long-press ko mauka do
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val ddx = ev.rawX - sx
-                    val ddy = ev.rawY - sy
-                    if (Math.abs(ddx) > startAt || Math.abs(ddy) > startAt) {
-                        v.cancelLongPress()
-                        touchOn.cancelLongPress()
-                    }
-                    // Jaldi pakdo: jab hi chal horizontal lage, ScrollView ko roko
-                    // (warna wo upar-neeche wali kheench samajh kar event chheen leta hai)
-                    if (!swiping && Math.abs(ddx) > dp(6) && Math.abs(ddx) > Math.abs(ddy)) {
-                        v.parent?.requestDisallowInterceptTouchEvent(true)
-                    }
-                    if (!swiping && ddx > startAt && Math.abs(ddx) > Math.abs(ddy) * 1.5f) {
-                        swiping = true
-                        v.parent?.requestDisallowInterceptTouchEvent(true)
-                    }
-                    if (swiping) {
-                        dx = ddx
-                        val slide = Math.min(dx, maxSlide)
-                        row.translationX = slide
-                        // ↩ nishan: jitni kheench utni roshni; 60dp ke baad hara (armed)
-                        val prog = (slide / fireAt).coerceIn(0f, 1f)
-                        handle.alpha = prog
-                        handle.scaleX = 0.7f + 0.3f * prog
-                        handle.scaleY = handle.scaleX
-                        handle.rotation = -25f * (1f - prog)
-                        handle.background = swipeHandleBg(slide >= fireAt)
-                        true
-                    } else false
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (!swiping) {
-                        false
-                    } else {
-                        val fire = dx > fireAt && ev.actionMasked == MotionEvent.ACTION_UP
-                        row.animate().translationX(0f).setDuration(200L)
-                            .setInterpolator(DecelerateInterpolator()).start()
-                        handle.animate().alpha(0f).scaleX(0.7f).scaleY(0.7f).rotation(0f).setDuration(180L).start()
-                        v.parent?.requestDisallowInterceptTouchEvent(false)
-                        swiping = false
-                        dx = 0f
-                        if (fire) setReply(m)
-                        true
-                    }
-                }
-                else -> false
-            }
-        }
-        // Bubble par bhi: wo long-clickable hai, is liye wahi touch target banta hai.
-        // Row par bhi: avatar/khaali jagah se swipe karne ke liye.
-        touchOn.setOnTouchListener(listener)
-        row.setOnTouchListener(listener)
-    }
-
-    /** ↩ nishan ka background: neela (chal raha) / hara (chhodne par reply pakka). */
-    private fun swipeHandleBg(armed: Boolean): GradientDrawable = GradientDrawable().apply {
-        setColor(if (armed) Color.argb(80, 49, 209, 88) else Color.argb(46, 84, 232, 255))
-        cornerRadius = dp(12).toFloat()
-        setStroke(dp(1), if (armed) hex("#31d158") else Color.argb(115, 84, 232, 255))
     }
 
     /**
@@ -695,72 +398,6 @@ class ChatActivity : Activity() {
     }
 
     /** Bubble ke andar reply ka hissa (website .quote). */
-    private fun quoteBlock(m: Msg): View {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(7), dp(5), dp(7), dp(5))
-            background = roundBox(Color.argb(56, 0, 0, 0), Color.TRANSPARENT, 4, 0)
-        }
-        box.addView(View(this).apply { setBackgroundColor(Color.argb(217, 255, 255, 255)) },
-            lp(dp(2), ViewGroup.LayoutParams.MATCH_PARENT))
-        val txt = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        txt.addView(TextView(this).apply {
-            text = m.replyName
-            textSize = 11f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(if (m.own) hex("#ffe6a8") else hex("#c4b5fd"))
-            setSingleLine(true)
-        })
-        txt.addView(TextView(this).apply {
-            text = m.replyText
-            textSize = 11.5f
-            setTextColor(Color.WHITE)
-            setSingleLine(true)
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        box.addView(txt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(6) })
-        return box
-    }
-
-    private fun buildChips(m: Msg): View {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = if (m.own) Gravity.END else Gravity.START
-        }
-        m.rx.forEach { (emoji, mine) ->
-            box.addView(TextView(this).apply {
-                text = "$emoji 1"
-                textSize = 12.5f
-                setTypeface(typeface, Typeface.BOLD)
-                setTextColor(Color.WHITE)      // dim dikhne ki wajah: text color set hi nahi tha
-                gravity = Gravity.CENTER
-                minHeight = dp(28)
-                setPadding(dp(9), dp(4), dp(9), dp(4))
-                includeFontPadding = true
-                background = GradientDrawable().apply {
-                    setColor(if (mine) Color.argb(150, 244, 114, 182) else Color.argb(235, 34, 26, 62))
-                    cornerRadius = dp(12).toFloat()
-                    setStroke(dp(1), if (mine) hex("#f472b6") else Color.argb(120, 255, 255, 255))
-                }
-                setOnClickListener { toggleRx(m, emoji) }
-            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(4) })
-        }
-        return box
-    }
-
-    private fun emptyState(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER
-        setPadding(dp(22), dp(20), dp(22), dp(16))
-        addView(TextView(this@ChatActivity).apply { text = "👋"; textSize = 26f; gravity = Gravity.CENTER })
-        addView(TextView(this@ChatActivity).apply {
-            text = "$peer ko salam bhejo!"
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(hex("#a9a6c8"))
-            setLineSpacing(0f, 1.7f)
-        })
-    }
-
     // ============================ COMPOSER ============================
 
     private fun buildComposer(): View {
@@ -1037,10 +674,10 @@ class ChatActivity : Activity() {
         trimToLimit()
     }
 
-    /** Screen/RAM mein zyada se zyada 100 messages — 120 ho to purane hata do. */
+    /** Screen/RAM mein zyada se zyada 300 messages — 340 hon to purane hata do. */
     private fun trimToLimit() {
-        val drop = msgs.size - ChatCache.MAX
-        if (drop > 20) repeat(drop) { msgs.removeAt(0) }
+        val drop = msgs.size - RAM_MAX
+        if (drop > 40) repeat(drop) { msgs.removeAt(0) }
     }
 
     /** Phone ke cache mein likh do (agli baar chat turant khule). */
@@ -1055,22 +692,26 @@ class ChatActivity : Activity() {
         })
     }
 
-    /** Upar scroll karne par purane 20 messages (pagination). */
+    /** Upar scroll karne par purane 20 messages (pagination) — jagah wahin rahegi. */
     private fun loadOlderPage() {
         if (!FirebaseChat.isReady(this) || loadingOlder || !hasMoreOlder || !scrollReady) return
         val oldest = oldestTs()
         if (oldest <= 0L) return
         loadingOlder = true
-        val y = scroll.scrollY
-        val h0 = threadBox.height
+        // pehli nazar aane wali line + uska offset yaad rakho (neeche se upar koodne na paye)
+        val first = rv.getChildAt(0)
+        val anchorKey = if (first != null) ad.list.getOrNull(rv.getChildAdapterPosition(first))?.key else null
+        val anchorTop = first?.top ?: 0
         FirebaseChat.loadBefore(this, chatId, oldest, PAGE) { list ->
             loadingOlder = false
             if (list.isEmpty()) { hasMoreOlder = false; return@loadBefore }
             mergeIncoming(list, prepend = true)
             saveCache()
             renderThread()
-            // wahin raho jahan the (neeche se upar koodne na paye)
-            scroll.post { scroll.scrollTo(0, y + (threadBox.height - h0)) }
+            rv.post {
+                val idx = ad.indexOfKey(anchorKey)
+                if (idx >= 0) lm.scrollToPositionWithOffset(idx, anchorTop)
+            }
         }
     }
 
@@ -1272,11 +913,24 @@ class ChatActivity : Activity() {
     }
 
     private fun scrollBottom() {
-        scroll.post {
-            scroll.fullScroll(View.FOCUS_DOWN)
+        rv.post {
+            val n = ad.itemCount
+            if (n > 0) rv.scrollToPosition(n - 1)
             scrollReady = true      // ab upar scroll karne par purane messages aayenge
         }
     }
+
+    // ==================== RecyclerView ka pul (ChatHost) ====================
+
+    override fun ctx(): Context = this
+    override fun peerName(): String = peer
+    override fun peerColorInt(): Int = peerColor
+    override fun tick(m: Msg): CharSequence = timeWithTick(m)
+    override fun bubbleMaxWidth(): Int =
+        Math.max(dp(120), (resources.displayMetrics.widthPixels * 0.85f).toInt() - dp(70))
+    override fun onSwipeReply(m: Msg) = setReply(m)
+    override fun onBubbleLongPress(m: Msg) = showMsgActions(m)
+    override fun onChipClick(m: Msg, emoji: String) = toggleRx(m, emoji)
 
     // ============================ HELPERS ============================
 
@@ -1312,7 +966,7 @@ class ChatActivity : Activity() {
         return hex(palette[Math.floorMod(name.hashCode(), palette.size)])
     }
 
-    private fun roundBox(fill: Int, stroke: Int, radiusDp: Int, strokeDp: Int): GradientDrawable =
+    override fun roundBox(fill: Int, stroke: Int, radiusDp: Int, strokeDp: Int): GradientDrawable =
         GradientDrawable().apply {
             setColor(fill)
             cornerRadius = dp(radiusDp).toFloat()

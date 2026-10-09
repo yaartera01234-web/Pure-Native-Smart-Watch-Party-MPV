@@ -1,0 +1,45 @@
+package app.party.wpnative
+
+/**
+ * Screen par dikhne wala ek message (ChatActivity ka model).
+ * (Pehle ye ChatActivity ke andar chhupa tha — ab RecyclerView ke sath
+ *  adapter ko bhi chahiye, is liye alag file mein.)
+ */
+class Msg(
+    val id: Int,
+    val text: String,
+    val own: Boolean,
+    val time: String,
+    val day: String,
+    var read: Boolean = false,
+    var replyName: String = "",
+    var replyText: String = "",
+    val rx: LinkedHashMap<String, Boolean> = LinkedHashMap(),
+    var fid: String = "",        // Firestore document id (dobara na aaye is liye)
+    var ts: Long = 0L            // asli waqt (pagination isi se hoti hai)
+)
+
+/**
+ * RecyclerView ki **ek line** — 4 tarah ki hoti hai:
+ *  - MSG    : asli message
+ *  - DAY    : "Aaj" / "Kal" wala sar-nama
+ *  - TYPING : doosre wale ke Instagram-jaise 3 dots
+ *  - EMPTY  : khaali chat wali state
+ *
+ * `key`  = DiffUtil ko batata hai ke kaun si line wahi purani hai
+ * `sig`  = andar ka maal badla (text / ✓✓ / reaction / reply) to diff pakad leta hai
+ */
+class Row(
+    val kind: Int,
+    val key: String,
+    val sig: String,
+    val msg: Msg?,
+    val day: String?
+) {
+    companion object {
+        const val MSG = 0
+        const val DAY = 1
+        const val TYPING = 2
+        const val EMPTY = 3
+    }
+}
