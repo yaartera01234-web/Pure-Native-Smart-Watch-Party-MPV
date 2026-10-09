@@ -46,7 +46,8 @@ import java.util.Locale
  *  - Apna bubble: right, gradient #5b21b6 -> #9333ea -> #db2777, radius 22, safed text
  *  - Doosre ka bubble: left, halka glassy #ffffff17 + 1dp border, radius 22
  *  - Bubble ke neeche: time + ✓✓ (parha hua = #5bdcff)
- *  - Neeche composer (.dm-inbar > .ig4pill): 🖼 photo, GIF, 🎤 mic, input, ➤ send (40dp gol)
+ *  - Neeche composer (.dm-inbar > .ig4pill): photo icon, mic icon, input, ➤ send (40dp gol)
+ *    (GIF button hataya gaya — keyboard se direct bhejte hain)
  *
  * Abhi demo data hai (in-memory). Asli E2E chat agle step mein.
  */
@@ -109,9 +110,6 @@ class ChatActivity : Activity() {
         buildReplyBar()
         col.addView(replyWrap, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        buildEmojiBar()
-        col.addView(emojiWrap, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
         threadBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             // website #dm-thread: justify-content: flex-end -> kam messages neeche se chipke
@@ -123,6 +121,10 @@ class ChatActivity : Activity() {
             addView(threadBox)
         }
         col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // ➕ wali emoji patti: composer ke THEEK upar (website: bottom 122px)
+        buildEmojiBar()
+        col.addView(emojiWrap, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         col.addView(buildComposer(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -484,30 +486,19 @@ class ChatActivity : Activity() {
             setPadding(dp(10), dp(9), dp(10), dp(9))
         }
 
-        // Pill: 🖼 + GIF + 🎤 + input  (website .ig4pill)
+        // Pill: photo icon + mic icon + input  (website .ig4pill)
         val pill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), 0, dp(8), 0)
             background = roundBox(Color.argb(23, 255, 255, 255), Color.argb(41, 255, 255, 255), 21, 1)
         }
-        pill.addView(pillBtn("🖼", intArrayOf(hex("#f59e0b"), hex("#ec4899"), hex("#8b5cf6"))) {
-            Toast.makeText(this, "Photo agle step mein", Toast.LENGTH_SHORT).show()
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply { rightMargin = dp(4) })
-        pill.addView(TextView(this).apply {
-            text = "GIF"
-            textSize = 11f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            setPadding(dp(8), 0, dp(8), 0)
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                intArrayOf(hex("#f472b6"), hex("#a78bfa"))).apply { cornerRadius = dp(12).toFloat() }
-            setOnClickListener { Toast.makeText(this@ChatActivity, "GIF agle step mein", Toast.LENGTH_SHORT).show() }
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply { rightMargin = dp(4) })
-        pill.addView(pillBtn("🎤", intArrayOf(hex("#06b6d4"), hex("#3b82f6"), hex("#8b5cf6"))) {
-            Toast.makeText(this, "Voice message agle step mein", Toast.LENGTH_SHORT).show()
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply { rightMargin = dp(4) })
+        pill.addView(iconBtn("photo", intArrayOf(hex("#f59e0b"), hex("#ec4899"), hex("#8b5cf6"))) {
+            Toast.makeText(this@ChatActivity, "Photo agle step mein", Toast.LENGTH_SHORT).show()
+        }, lp(dp(32), dp(32)).apply { rightMargin = dp(4) })
+        pill.addView(iconBtn("mic", intArrayOf(hex("#06b6d4"), hex("#3b82f6"), hex("#8b5cf6"))) {
+            Toast.makeText(this@ChatActivity, "Voice message agle step mein", Toast.LENGTH_SHORT).show()
+        }, lp(dp(32), dp(32)).apply { rightMargin = dp(4) })
 
         input = EditText(this).apply {
             hint = "Message likho..."
@@ -541,15 +532,12 @@ class ChatActivity : Activity() {
         return bar
     }
 
-    private fun pillBtn(label: String, colors: IntArray, fn: () -> Unit): TextView = TextView(this).apply {
-        text = label
-        textSize = 14f
-        gravity = Gravity.CENTER
-        setPadding(dp(8), 0, dp(8), 0)
-        setTextColor(Color.WHITE)
+    /** Composer ke 32dp gol icon buttons (photo / mic) — website ke SVG jaisa. */
+    private fun iconBtn(kind: String, colors: IntArray, fn: () -> Unit): FrameLayout = FrameLayout(this).apply {
         background = GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply {
             cornerRadius = dp(12).toFloat()
         }
+        addView(ComposerIcon(this@ChatActivity, kind), FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
         setOnClickListener { fn() }
     }
 
@@ -763,7 +751,8 @@ class ChatActivity : Activity() {
                 cornerRadius = dp(16).toFloat()
                 setStroke(dp(1), Color.argb(140, 255, 255, 255), dp(3).toFloat(), dp(3).toFloat())
             }
-            setOnClickListener { dlg.dismiss(); openEmojiBox(m) }
+            // sheet band hone ke baad patti khule (warna keyboard focus nahi leta)
+            setOnClickListener { dlg.dismiss(); window.decorView.postDelayed({ openEmojiBox(m) }, 150) }
         }, lp(dp(33), dp(33)))
         sheet.addView(emoRow, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(10)
@@ -881,5 +870,78 @@ class ChatActivity : Activity() {
             rx = LinkedHashMap<String, Boolean>().apply { put("🔥", false) }))
         msgs.add(Msg(nextId++, "Haan, 9 baje ready rehna", true,
             timeShort(now - 540_000L), dayLabel(now), read = true))
+    }
+}
+
+/** Composer ke icons — website ke SVG se utare gaye: "photo" aur "mic". */
+private class ComposerIcon(ctx: Context, private val kind: String) : View(ctx) {
+
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val path = Path()
+    private val box = RectF()
+
+    override fun onDraw(c: Canvas) {
+        val s = width / 24f
+        c.save()
+        c.scale(s, s)
+        if (kind == "photo") {
+            // frame
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 1.9f
+            box.set(3f, 5f, 21f, 19f)
+            c.drawRoundRect(box, 2f, 2f, p)
+            // sooraj
+            p.style = Paint.Style.FILL
+            c.drawCircle(8.6f, 9.6f, 2.1f, p)
+            // pahad
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 1.7f
+            path.reset()
+            path.moveTo(3f, 18.2f)
+            path.lineTo(8.6f, 11.6f)
+            path.lineTo(12.8f, 16.6f)
+            path.lineTo(15.8f, 13.4f)
+            path.lineTo(21f, 18.6f)
+            c.drawPath(path, p)
+        } else {
+            // mic ka capsule
+            p.style = Paint.Style.FILL
+            box.set(9f, 2f, 15f, 13f)
+            c.drawRoundRect(box, 3f, 3f, p)
+            // neeche wali U
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2f
+            path.reset()
+            box.set(5f, 5f, 19f, 19f)
+            path.arcTo(box, 0f, 180f)
+            c.drawPath(path, p)
+            // dandi + base
+            c.drawLine(12f, 19f, 12f, 21.6f, p)
+            c.drawLine(8.4f, 21.6f, 15.6f, 21.6f, p)
+            // chamak (chhote sitare)
+            p.style = Paint.Style.FILL
+            star(c, 19.2f, 3.2f, 1.7f)
+            star(c, 21.6f, 6.2f, 1.1f)
+            star(c, 16.6f, 5.6f, 1f)
+        }
+        c.restore()
+    }
+
+    private fun star(c: Canvas, cx: Float, cy: Float, r: Float) {
+        path.reset()
+        path.moveTo(cx, cy - r)
+        path.lineTo(cx + r * 0.42f, cy - r * 0.42f)
+        path.lineTo(cx + r, cy)
+        path.lineTo(cx + r * 0.42f, cy + r * 0.42f)
+        path.lineTo(cx, cy + r)
+        path.lineTo(cx - r * 0.42f, cy + r * 0.42f)
+        path.lineTo(cx - r, cy)
+        path.lineTo(cx - r * 0.42f, cy - r * 0.42f)
+        path.close()
+        c.drawPath(path, p)
     }
 }
