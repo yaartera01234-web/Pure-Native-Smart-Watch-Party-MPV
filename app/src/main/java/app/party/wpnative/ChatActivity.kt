@@ -38,6 +38,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.google.firebase.firestore.ListenerRegistration
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -60,7 +61,7 @@ import java.util.Locale
  */
 class ChatActivity : Activity() {
 
-    /** Ek message. rx = emoji -> kya wo meri reaction hai. */
+    /** Ek message. rx = emoji -> kya wo meri reaction hai. fid = Firebase wali id. */
     private class Msg(
         val id: Int,
         val text: String,
@@ -70,7 +71,9 @@ class ChatActivity : Activity() {
         var read: Boolean = false,
         var replyName: String = "",
         var replyText: String = "",
-        val rx: LinkedHashMap<String, Boolean> = LinkedHashMap()
+        val rx: LinkedHashMap<String, Boolean> = LinkedHashMap(),
+        var fid: String = "",        // Firestore document id (dobara na aaye is liye)
+        var ts: Long = 0L            // asli waqt (pagination isi se hoti hai)
     )
 
     private var peer = "Dost"
@@ -82,9 +85,23 @@ class ChatActivity : Activity() {
     private var emojiTarget: Msg? = null   // ➕ se jis message pe emoji lagana hai
     private var typingOn = false     // kya doosra wala abhi likh raha hai (Instagram wale dots)
 
-    // DEMO: jab tak asli E2E/server nahi aata, peer ki typing dikhane ke liye.
-    // Asli chat aane par isko false kar dena — dots tab server ke signal se chalenge.
+    // DEMO: jab tak asli server nahi aata, peer ki typing dikhane ke liye.
+    // Firebase live ho jaye to ye apne aap band (asli typing signal chalega).
     private val demoPeerTyping = true
+
+    // ---- Firebase (Firestore) ----
+    private var me = "Me"
+    private var chatId = ""
+    private var msgListener: ListenerRegistration? = null
+    private var presenceListener: ListenerRegistration? = null
+    private var typingListener: ListenerRegistration? = null
+    private var loadingOlder = false
+    private var hasMoreOlder = true
+    private var lastTypingPing = 0L
+    private var scrollReady = false   // pehli layout ke baad hi pagination chalegi
+
+    /** Kitne messages ek baar mein (chat khulte hi) aur upar scroll par. */
+    private val PAGE = 20L
 
     private lateinit var threadBox: LinearLayout
     private lateinit var scroll: ScrollView
@@ -116,10 +133,22 @@ class ChatActivity : Activity() {
         super.onCreate(savedInstanceState)
         peer = intent.getStringExtra("name")?.takeIf { it.isNotBlank() } ?: "Dost"
         peerColor = pickColor(peer)
+        me = WpUser.me(this)
+        chatId = WpUser.chatId(me, peer)
         setContentView(buildScreen())
-        seedDemo()
+
+        // 1) Phone ka cache — chat turant khul jaye (Firebase ka intezar nahi)
+        val cached = ChatCache.load(this, chatId)
+        if (cached.isNotEmpty()) {
+            cached.forEach { msgs.add(toMsg(it)) }
+        } else if (!FirebaseChat.isReady(this)) {
+            seedDemo()          // sirf demo mode mein; Firebase ho to khaali chat theek hai
+        }
         renderThread()
         scrollBottom()
+
+        // 2) Firebase: aakhri 20 + naye ka live listener + presence + typing
+        startFirebase()
     }
 
     override fun onResume() {
@@ -128,11 +157,21 @@ class ChatActivity : Activity() {
         if (!Friends.has(this, peer)) { finish(); return }
         refreshStatus()
         statusHandler.post(statusTick)
+        FirebaseChat.setPresence(this, me, true)
     }
 
     override fun onPause() {
         statusHandler.removeCallbacks(statusTick)
+        FirebaseChat.setTyping(this, chatId, me, false)
+        FirebaseChat.setPresence(this, me, false)
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        msgListener?.remove(); msgListener = null
+        presenceListener?.remove(); presenceListener = null
+        typingListener?.remove(); typingListener = null
+        super.onDestroy()
     }
 
     /** Header ka dot + "Online / Offline • 12 min ago" taaza karo. */
@@ -163,6 +202,10 @@ class ChatActivity : Activity() {
         scroll = ScrollView(this).apply {
             isFillViewport = true
             addView(threadBox)
+        }
+        // Upar scroll -> purane 20 messages (pagination, hang-free)
+        scroll.setOnScrollChangeListener { _, _, _, _, _ ->
+            if (scroll.scrollY <= 4) loadOlderPage()
         }
         col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -757,6 +800,12 @@ class ChatActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             background = null
             imeOptions = EditorInfo.IME_ACTION_SEND
+            // likhte hi doosre ko "typing..." dikhe
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { pingTyping() }
+                override fun afterTextChanged(s: android.text.Editable?) {}
+            })
             setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_SEND) { send(); true } else false
             }
@@ -923,29 +972,144 @@ class ChatActivity : Activity() {
         return ""
     }
 
+    // ============================ FIREBASE ============================
+
+    /** Firebase ho to: aakhri 20 messages + naye ka live listener + presence + typing. */
+    private fun startFirebase() {
+        if (!FirebaseChat.isReady(this)) return      // json nahi hai -> demo mode
+
+        FirebaseChat.loadLast(this, chatId, PAGE) { list ->
+            if (list.isNotEmpty()) {
+                mergeIncoming(list, prepend = false)
+                saveCache()
+            }
+            renderThread()
+            scrollBottom()
+            startLiveListener()
+        }
+
+        presenceListener = FirebaseChat.listenPresence(this, peer) { online, seenAt ->
+            Presence.setState(this, peer, online, seenAt)
+            refreshStatus()
+        }
+
+        typingListener = FirebaseChat.listenTyping(this, chatId, me) { on -> setTyping(on) }
+    }
+
+    /** Naye messages ka live listener (sirf sabse naye ke baad wale). */
+    private fun startLiveListener() {
+        msgListener?.remove()
+        msgListener = FirebaseChat.listenNew(this, chatId, newestTs()) { list ->
+            mergeIncoming(list, prepend = false)
+            saveCache()
+            renderThread()
+            scrollBottom()
+        }
+    }
+
+    private fun toMsg(cm: ChatMsg): Msg = Msg(
+        id = nextId++,
+        text = cm.text,
+        own = cm.from == me,
+        time = timeShort(cm.ts),
+        day = dayLabel(cm.ts),
+        read = cm.read,
+        replyName = cm.replyName,
+        replyText = cm.replyText,
+        fid = cm.id,
+        ts = cm.ts
+    )
+
+    private fun newestTs(): Long = msgs.maxOfOrNull { it.ts } ?: 0L
+    private fun oldestTs(): Long = msgs.minOfOrNull { it.ts } ?: 0L
+
+    /** Firebase se aaye messages ko milao (ek hi message do baar na lage). */
+    private fun mergeIncoming(list: List<ChatMsg>, prepend: Boolean) {
+        val known = msgs.map { it.fid }.toHashSet()
+        val fresh = list.filter { it.id.isNotBlank() && !known.contains(it.id) }
+        if (fresh.isEmpty()) return
+        val converted = fresh.map { toMsg(it) }
+        if (prepend) msgs.addAll(0, converted) else msgs.addAll(converted)
+        msgs.sortBy { it.ts }
+        trimToLimit()
+    }
+
+    /** Screen/RAM mein zyada se zyada 100 messages — 120 ho to purane hata do. */
+    private fun trimToLimit() {
+        val drop = msgs.size - ChatCache.MAX
+        if (drop > 20) repeat(drop) { msgs.removeAt(0) }
+    }
+
+    /** Phone ke cache mein likh do (agli baar chat turant khule). */
+    private fun saveCache() {
+        ChatCache.save(this, chatId, msgs.map {
+            ChatMsg(
+                id = if (it.fid.isNotBlank()) it.fid else "L${it.ts}_${it.id}",
+                from = if (it.own) me else peer,
+                text = it.text, ts = it.ts, read = it.read,
+                replyName = it.replyName, replyText = it.replyText
+            )
+        })
+    }
+
+    /** Upar scroll karne par purane 20 messages (pagination). */
+    private fun loadOlderPage() {
+        if (!FirebaseChat.isReady(this) || loadingOlder || !hasMoreOlder || !scrollReady) return
+        val oldest = oldestTs()
+        if (oldest <= 0L) return
+        loadingOlder = true
+        val y = scroll.scrollY
+        val h0 = threadBox.height
+        FirebaseChat.loadBefore(this, chatId, oldest, PAGE) { list ->
+            loadingOlder = false
+            if (list.isEmpty()) { hasMoreOlder = false; return@loadBefore }
+            mergeIncoming(list, prepend = true)
+            saveCache()
+            renderThread()
+            // wahin raho jahan the (neeche se upar koodne na paye)
+            scroll.post { scroll.scrollTo(0, y + (threadBox.height - h0)) }
+        }
+    }
+
+    /** Main likh raha hoon — doosre ko dots dikhne ke liye (2.5s mein ek baar). */
+    private fun pingTyping() {
+        if (!FirebaseChat.isReady(this)) return
+        val now = System.currentTimeMillis()
+        if (now - lastTypingPing < 2500L) return
+        lastTypingPing = now
+        FirebaseChat.setTyping(this, chatId, me, true)
+        window.decorView.postDelayed({ FirebaseChat.setTyping(this, chatId, me, false) }, 3500L)
+    }
+
     // ============================ KAAM ============================
 
     private fun send() {
         val txt = input.text.toString().trim()
         if (txt.isEmpty()) return
         val now = System.currentTimeMillis()
-        val m = Msg(nextId++, txt, true, timeShort(now), dayLabel(now), read = false)
+        val m = Msg(nextId++, txt, true, timeShort(now), dayLabel(now), read = false, ts = now)
         replyTo?.let {
             m.replyName = if (it.own) "You" else peer
             m.replyText = it.text
             clearReply()
         }
         msgs.add(m)
+        // Firebase (agar ready ho) — warna sirf local/demo
+        val cm = ChatMsg(from = me, text = txt, ts = now, replyName = m.replyName, replyText = m.replyText)
+        if (FirebaseChat.send(this, chatId, cm)) m.fid = cm.id
+        trimToLimit()
+        saveCache()
         animId = m.id
         renderThread()
         scrollBottom()
+        startLiveListener()
         input.setText("")
         // Demo: thodi der baad doosri taraf "parh liya" -> ✓✓ neela
         window.decorView.postDelayed({
             if (!isFinishing && msgs.any { it.id == m.id }) { m.read = true; renderThread() }
         }, 900)
-        // Demo: peer thodi der typing karta hai (asli E2E mein server bataega)
-        if (demoPeerTyping) {
+        // Demo: peer thodi der typing karta hai (Firebase live ho to asli signal chalega)
+        if (demoPeerTyping && !FirebaseChat.isReady(this)) {
             window.decorView.postDelayed({ if (!isFinishing) setTyping(true) }, 1200)
             window.decorView.postDelayed({ if (!isFinishing) setTyping(false) }, 4200)
         }
@@ -1054,8 +1218,10 @@ class ChatActivity : Activity() {
     }
 
     private fun deleteMsg(m: Msg) {
+        FirebaseChat.delete(this, chatId, m.fid)
         msgs.removeAll { it.id == m.id }
         if (replyTo?.id == m.id) clearReply()
+        saveCache()
         renderThread()
         Toast.makeText(this, "Message delete ho gaya", Toast.LENGTH_SHORT).show()
     }
@@ -1071,8 +1237,10 @@ class ChatActivity : Activity() {
         showDropMenu(anchor, listOf(
             "🧹  Chat clear" to {
                 confirmThen(this, "Chat clear karein?", "$peer ke saath purani baat-cheet mit jayegi.") {
+                    FirebaseChat.deleteAll(this, chatId, msgs.map { it.fid })
                     msgs.clear()
                     clearReply()
+                    ChatCache.clear(this, chatId)
                     renderThread()
                     Toast.makeText(this, "Chat clear ho gayi", Toast.LENGTH_SHORT).show()
                 }
@@ -1101,7 +1269,10 @@ class ChatActivity : Activity() {
     }
 
     private fun scrollBottom() {
-        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        scroll.post {
+            scroll.fullScroll(View.FOCUS_DOWN)
+            scrollReady = true      // ab upar scroll karne par purane messages aayenge
+        }
     }
 
     // ============================ HELPERS ============================
@@ -1150,14 +1321,14 @@ class ChatActivity : Activity() {
         val now = System.currentTimeMillis()
         val yest = now - 86_400_000L
         msgs.add(Msg(nextId++, "Kal ka party kaisa tha?", false,
-            timeShort(yest - 3_600_000L), dayLabel(yest)))
+            timeShort(yest - 3_600_000L), dayLabel(yest), ts = yest - 3_600_000L))
         msgs.add(Msg(nextId++, "Bahut maza aaya 🎉", true,
             timeShort(yest - 3_500_000L), dayLabel(yest), read = true,
-            replyName = peer, replyText = "Kal ka party kaisa tha?"))
+            replyName = peer, replyText = "Kal ka party kaisa tha?", ts = yest - 3_500_000L))
         msgs.add(Msg(nextId++, "Aaj raat phir chalega?", false,
             timeShort(now - 600_000L), dayLabel(now),
-            rx = LinkedHashMap<String, Boolean>().apply { put("🔥", false) }))
+            rx = LinkedHashMap<String, Boolean>().apply { put("🔥", false) }, ts = now - 600_000L))
         msgs.add(Msg(nextId++, "Haan, 9 baje ready rehna", true,
-            timeShort(now - 540_000L), dayLabel(now), read = true))
+            timeShort(now - 540_000L), dayLabel(now), read = true, ts = now - 540_000L))
     }
 }

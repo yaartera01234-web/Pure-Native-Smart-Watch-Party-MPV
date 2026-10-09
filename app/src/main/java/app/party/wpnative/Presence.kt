@@ -52,6 +52,15 @@ object Presence {
             .apply()
     }
 
+    /** Firebase ke presence signal se state set karo (online + last seen dono). */
+    fun setState(ctx: Context, name: String, online: Boolean, seenAt: Long) {
+        seed(ctx)
+        prefs(ctx).edit()
+            .putBoolean(K_ON + name, online)
+            .putLong(K_SEEN + name, if (seenAt > 0L) seenAt else System.currentTimeMillis())
+            .apply()
+    }
+
     /** Header ka text: "Online" ya "Offline • 12 min ago". */
     fun label(ctx: Context, name: String): String {
         if (isOnline(ctx, name)) return "Online"
