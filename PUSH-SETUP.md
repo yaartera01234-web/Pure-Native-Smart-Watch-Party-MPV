@@ -1,72 +1,55 @@
-# Push Notification setup (WhatsApp jaisi) — bina card ke, free
+# Push notification — relay setup (free, bina card)
 
-App ka hissa tayyar hai. Bas FCM tak message pahunchane ke liye ek chhota
-**Cloudflare Worker** chahiye (free, card nahi mangta). 5–7 minute ka kaam hai.
+App ka hissa tayyar hai. FCM bhejne ke liye bas ek chhota **relay** chahiye
+(Firebase ki server key app ke andar nahi rakhte — aur ye repo **public** hai).
 
----
-
-## 1) Firebase service account key
-
-1. Firebase console → ⚙️ **Project settings** → **Service accounts**
-2. **"Generate new private key"** → JSON file download hogi
-   (isme `project_id`, `client_email`, `private_key` hote hain)
-3. Is file ko **kisi ko mat bhejna** — sirf aap khud Worker mein paste karenge
+Do raaste hain — **jo aasaan lage wo chun lo**:
 
 ---
 
-## 2) Cloudflare account + Worker
+## 🅰️ Google Apps Script (sabse aasaan — wahi Google account)
 
-1. https://dash.cloudflare.com/sign-up → account banao (email + password, **card nahi**)
-2. Bayen menu → **Workers & Pages** → **Create** → **Create Worker**
-3. Naam kuch bhi do (jaise `wp-push`) → **Deploy**
-4. Deploy ke baad **"Edit code"** dabao
-5. Jo code pehle se hai wo sab **delete** kar do, aur repo ki file
-   `push-worker/worker.js` ka poora content paste kar do
-6. **Save and Deploy**
+1. Firebase console → ⚙️ **Project settings → Service accounts → Generate new private key**
+   → JSON milega (`project_id`, `client_email`, `private_key`)
+2. **script.google.com** → **New project**
+3. Repo ki file `push-relay/apps-script.gs` ka poora content paste karo
+4. Upar 3 cheezein bharo (JSON se copy):
+   - `PROJECT_ID` = `app-party-wpnative`
+   - `CLIENT_EMAIL` = JSON ka `client_email`
+   - `PRIVATE_KEY` = JSON ka `private_key` (poora, `\n` samet)
+5. **Deploy → New deployment → ⚙️ Web app**
+   - Execute as: **Me**
+   - Who has access: **Anyone**
+   - **Deploy** → URL milega (`/exec` wala) → copy kar lo
+6. Wo URL mujhe bhej do
 
----
-
-## 3) Worker ke secrets (2)
-
-Worker ke page par → **Settings → Variables → Environment Variables → Add variable**
-(dono ko **Encrypt** karna hai):
-
-| Name | Value |
-|---|---|
-| `PROJECT_ID` | `app-party-wpnative` |
-| `GOOGLE_SA` | service account JSON ka **poora text** (ek hi line mein paste ho jayega) |
-
-**Save and Deploy** karna na bhoolna.
+🔒 Private key sirf **aapke Google account** mein rahegi — repo mein kabhi nahi aayegi.
 
 ---
 
-## 4) Worker ka URL
+## 🅱️ Cloudflare Worker (bhi free hai — card nahi mangta)
 
-Worker page par upar **"Visit"** ya `https://wp-push.<aapka-subdomain>.workers.dev`
-likha hoga — wo copy kar lo.
+Workers **Free** plan abhi bhi free hai: 100,000 requests/day, **no credit card**
+([source](https://freetier.co/directory/products/cloudflare-workers)).
+Agar paid wala screen aaye to ghalat plan select ho gaya — **Workers Free** chuno
+("Workers Paid $5" nahi, R2 nahi — R2 ko card chahiye).
 
-Wo URL mujhe bhej do (ya khud `Push.kt` mein `RELAY_URL` mein daal do):
-
-```kotlin
-private const val RELAY_URL = "https://wp-push.xxxxx.workers.dev"
-```
-
----
-
-## 5) Test
-
-1. Naya APK install karo (Actions → Artifacts)
-2. App kholo → **Allow notifications** (permission aayega)
-3. **Phone A**: message bhejo
-4. **Phone B**: app ko **band** kar do (recent se hata do)
-5. Phone B par notification aayegi → **Reply** dabao → seedha jawab likho → bhejo
-6. Phone A ko jawab mil jayega ⚡
+1. **dash.cloudflare.com** → **Workers & Pages → Create → Create Worker** (Free plan)
+2. `push-worker/worker.js` ka code paste kar ke **Deploy**
+3. Worker → **Settings → Variables** → 2 secrets:
+   - `PROJECT_ID` = `app-party-wpnative`
+   - `GOOGLE_SA` = service account JSON ka poora text
+4. Worker ka URL (`https://xxxx.workers.dev`) bhej do
 
 ---
 
-## Masla aaye to
+## Uske baad (main kar doonga)
 
-- **Notification nahi aayi**: Worker URL check karo, aur phone B ke Firestore
-  `users/{naam}` mein `fcmToken` maujood hai ya nahi
-- **"token error"**: service account JSON theek paste hua ya nahi (poora JSON, quotes sahi)
-- Worker ka test: browser se URL kholo → `WP push relay OK` likha aana chahiye
+`Push.kt` mein URL daal kar push on kar doonga.
+
+## Test
+
+1. Naya APK install → **Allow notifications**
+2. Phone A: message bhejo
+3. Phone B: app **band** kar do (recent se hatao)
+4. Phone B par notification → **Reply** → seedha jawab likho → bhejo ⚡
