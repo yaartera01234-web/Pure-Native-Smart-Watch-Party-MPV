@@ -198,7 +198,10 @@ class ChatActivity : Activity(), ChatHost {
             clipToPadding = false
             setHasFixedSize(true)
             itemAnimator = DefaultItemAnimator().apply {
-                addDuration = 180L; moveDuration = 180L; changeDuration = 120L; removeDuration = 150L
+                addDuration = 180L; moveDuration = 180L; removeDuration = 150L
+                /* ✓✓ neela hone / reaction par cross-fade se bubble "pharak" khaata tha
+                   (purani lambi line ki chaudai ek pal ke liye nazar aati thi) -> band */
+                supportsChangeAnimations = false
             }
             // Upar scroll karte hi purane 20 messages (pagination)
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -697,11 +700,11 @@ class ChatActivity : Activity(), ChatHost {
      * Server se mile messages ke daayre mein: jo message **server par nahi** (mita diya gaya)
      * aur phone ke cache mein abhi bhi hai -> use bhi hata do.
      */
-    private fun dropDeletedLocally(server: List<ChatMsg>) {
+    private fun dropDeletedLocally(server: List<ChatMsg>, to: Long = Long.MAX_VALUE) {
         if (server.isEmpty()) return
         val ids = server.map { it.id }.toHashSet()
         val from = server.minOf { it.ts }
-        msgs.removeAll { it.fid.isNotBlank() && it.ts >= from && it.fid !in ids }
+        msgs.removeAll { it.fid.isNotBlank() && it.ts >= from && it.ts <= to && it.fid !in ids }
     }
 
     private fun toMsg(cm: ChatMsg): Msg = Msg(
@@ -766,6 +769,8 @@ class ChatActivity : Activity(), ChatHost {
             loadingOlder = false
             if (list.isEmpty()) { hasMoreOlder = false; return@loadBefore }
             mergeIncoming(list, prepend = true)
+            // is puraane page mein se jo message doosre ne mita diya -> yahan se bhi hata do
+            dropDeletedLocally(list, list.maxOf { it.ts })
             saveCache()
             renderThread()
             rv.post {

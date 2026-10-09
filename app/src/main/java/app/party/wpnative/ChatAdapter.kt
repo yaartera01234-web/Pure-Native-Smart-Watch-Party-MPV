@@ -305,6 +305,10 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 rebuildChips(m)
             }
             timeTv.text = host.tick(m)
+
+            /* recycle hui line kabhi kabhi purani (lambi) chaudai ke sath dikhti thi —
+               ek pal ko bara bubble, phir chhota. Naap-tol dobara karwa dete hain. */
+            row.requestLayout()
         }
 
         private fun rebuildChips(m: Msg) {
