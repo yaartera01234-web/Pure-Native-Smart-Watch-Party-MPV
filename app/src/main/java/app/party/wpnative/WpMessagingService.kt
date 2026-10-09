@@ -58,7 +58,11 @@ class ReplyReceiver : BroadcastReceiver() {
         FirebaseChat.send(
             ctx, chatId,
             ChatMsg(from = me, text = text, ts = System.currentTimeMillis(), type = "text")
-        )
+        ) {
+            // Notification se reply bhi 121waana bana sakta hai — us surat mein
+            // Firestore ke naye 120 rakho, baqi hamesha ke liye trim.
+            FirebaseChat.prune(ctx, chatId)
+        }
         // notification hata do (abhi ya thodi der baad — send async hai)
         try {
             (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(

@@ -88,10 +88,12 @@ class ChatActivity : Activity(), ChatHost {
     private var typingListener: ListenerRegistration? = null
     private var loadingOlder = false
     private var hasMoreOlder = true
+    private var pruning = false
+    private var pruneAgain = false
     private var lastTypingPing = 0L
     private var scrollReady = false   // pehli layout ke baad hi pagination chalegi
 
-    /** Kitne messages ek baar mein (chat khulte hi) aur upar scroll par. */
+    /** Upar scroll par ek baar mein kitne purane messages. */
     private val PAGE = 20L
     private val REQ_PHOTO = 77       // gallery se photo chunne ka code
     private val REQ_MIC = 78         // mic ki ijazat mangne ka code
@@ -106,7 +108,8 @@ class ChatActivity : Activity(), ChatHost {
     private lateinit var rv: RecyclerView
     private lateinit var lm: LinearLayoutManager
     private lateinit var ad: ChatAdapter
-    private val RAM_MAX = 300        // screen/RAM mein itne messages (340 hon to purane trim)
+    /** Screen/RAM mein itne messages — 120 se upar purane trim (phone + Firestore dono). */
+    private val RAM_MAX = FirebaseChat.MSG_KEEP
     private lateinit var input: EditText
     private lateinit var replyBar: LinearLayout
     private lateinit var replyWrap: FrameLayout
@@ -721,16 +724,27 @@ class ChatActivity : Activity(), ChatHost {
     private fun startFirebase() {
         if (!FirebaseChat.isReady(this)) return      // json nahi hai -> demo mode
 
-        FirebaseChat.loadLast(this, chatId, PAGE) { list ->
-            if (list.isNotEmpty()) {
-                // Doosre phone ne koi message mitaya ho to wo server par nahi hai ->
-                // phone ke cache se bhi hata do (warna wapas aa jata hai)
-                dropDeletedLocally(list)
-                mergeIncoming(list, prepend = false)
+        // Phone ka cache pehle hi turant nazar aa gaya. Ab ek hi query mein Firebase ke
+        // naye 120 lao AUR us se purane sab hamesha ke liye mitao (alag 20 reads nahi).
+        val syncStarted = System.currentTimeMillis()
+        FirebaseChat.prune(this, chatId) { latest ->
+            if (latest != null) {
+                // `deleted` nishan wala message bhi phone par wapas na aaye.
+                val keep = latest.filterNot { it.deleted }.map { it.id }.toHashSet()
+                // Doosre phone ne 120 se purana mita diya ho to is phone se bhi hatao.
+                // Query ke darmiyan abhi-abhi bheja gaya message (`> syncStarted`) bachao.
+                val gone = msgs.filter {
+                    it.fid.isNotBlank() && it.fid !in keep && it.ts <= syncStarted
+                }
+                gone.forEach { MediaCleanup.forget(this, chatId, it.fid) }
+                if (gone.isNotEmpty()) msgs.removeAll(gone.toSet())
+                MediaCleanup.keepOnly(this, chatId, keep, syncStarted)
+                mergeIncoming(latest, prepend = false)
                 saveCache()
+                renderThread()
+                scrollBottom()
             }
-            renderThread()
-            scrollBottom()
+            // Query fail ho tab bhi live messages band na hon.
             startLiveListener()
         }
 
@@ -740,6 +754,25 @@ class ChatActivity : Activity(), ChatHost {
         }
 
         typingListener = FirebaseChat.listenTyping(this, chatId, me) { on -> setTyping(on) }
+    }
+
+    /**
+     * Naya message bhejne ke baad: agar is chat mein 120 se zyada ho gaye to
+     * sabse purane Firestore se mita do (sasta rasta — poora hisaab baar baar nahi).
+     */
+    private fun pruneAfterSend() {
+        if (msgs.size < FirebaseChat.MSG_KEEP) return
+        if (pruning) { pruneAgain = true; return }
+        val cut = msgs[msgs.size - FirebaseChat.MSG_KEEP].ts
+        if (cut <= 0L) return
+        pruning = true
+        FirebaseChat.prune(this, chatId, cut) {
+            pruning = false
+            if (pruneAgain) {
+                pruneAgain = false
+                pruneAfterSend()
+            }
+        }
     }
 
     /** Live nazar: naya message bhi aata hai, aur doosre ka mitaya hua bhi turant hat ta hai. */
@@ -817,10 +850,15 @@ class ChatActivity : Activity(), ChatHost {
         trimToLimit()
     }
 
-    /** Screen/RAM mein zyada se zyada 300 messages — 340 hon to purane hata do. */
+    /** 121waana aate hi sabse purana phone se bhi hatao (RAM/cache/media). */
     private fun trimToLimit() {
         val drop = msgs.size - RAM_MAX
-        if (drop > 40) repeat(drop) { msgs.removeAt(0) }
+        if (drop <= 0) return
+        repeat(drop) {
+            val old = msgs.removeAt(0)
+            if (old.mediaKey.isNotBlank()) MediaCache.delete(this, old.mediaKey)
+            if (old.fid.isNotBlank()) MediaCleanup.forget(this, chatId, old.fid)
+        }
     }
 
     /** Phone ke cache mein likh do (agli baar chat turant khule). */
@@ -917,7 +955,7 @@ class ChatActivity : Activity(), ChatHost {
 
         val cm = ChatMsg(from = me, text = "", ts = now, type = "photo")
         cm.media = MediaCache.b64(bytes)
-        if (FirebaseChat.send(this, chatId, cm)) {
+        if (FirebaseChat.send(this, chatId, cm) { pruneAfterSend() }) {
             MediaCache.rename(this, key, cm.id)   // ab chaabi = asli id
             m.fid = cm.id
             m.mediaKey = cm.id
@@ -1001,7 +1039,7 @@ class ChatActivity : Activity(), ChatHost {
 
         val cm = ChatMsg(from = me, text = "", ts = now, type = "voice", dur = dur, wave = wave)
         cm.media = MediaCache.b64(bytes)
-        if (FirebaseChat.send(this, chatId, cm)) {
+        if (FirebaseChat.send(this, chatId, cm) { pruneAfterSend() }) {
             MediaCache.rename(this, key, cm.id)   // ab chaabi = asli id
             m.fid = cm.id
             m.mediaKey = cm.id
@@ -1028,7 +1066,7 @@ class ChatActivity : Activity(), ChatHost {
         msgs.add(m)
         // Firebase (agar ready ho) — warna sirf local/demo
         val cm = ChatMsg(from = me, text = txt, ts = now, replyName = m.replyName, replyText = m.replyText)
-        if (FirebaseChat.send(this, chatId, cm)) m.fid = cm.id
+        if (FirebaseChat.send(this, chatId, cm) { pruneAfterSend() }) m.fid = cm.id
         trimToLimit()
         saveCache()
         animId = m.id

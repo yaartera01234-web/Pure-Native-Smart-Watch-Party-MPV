@@ -28,7 +28,7 @@ object MediaCleanup {
 
     private const val PREF = "media_idx"
     private const val KEY = "items"
-    private const val MAX_ITEMS = 600          // itni entries kaafi hain
+    private const val MAX_ITEMS = 5000         // 3 din ka bohat bada buffer; entry na kho jaye
     private const val PER_RUN = 80             // ek baar mein itni media saaf
 
     /** Chhote se waqt mein do baar na chale (6 ghante). */
@@ -46,6 +46,41 @@ object MediaCleanup {
                 if (items.size > MAX_ITEMS) items.subList(0, items.size - MAX_ITEMS).clear()
                 save(ctx, items)
             }
+        } catch (t: Throwable) { }
+    }
+
+    /**
+     * Message 120 ki had se bahar gaya -> uski media aur registry entry bhi abhi hatao.
+     */
+    fun forget(ctx: Context, chatId: String, msgId: String) {
+        if (chatId.isBlank() || msgId.isBlank()) return
+        try {
+            val prefix = "$chatId|$msgId|"
+            val items = load(ctx).toMutableList()
+            if (items.removeAll { it.startsWith(prefix) }) save(ctx, items)
+            MediaCache.delete(ctx, msgId)
+        } catch (t: Throwable) { }
+    }
+
+    /**
+     * Firestore ne jo naye 120 diye, is chat ki baqi registry/files purani hain.
+     * `preserveAfter` ke baad bheja gaya pending message query ke darmiyan na mite.
+     */
+    fun keepOnly(ctx: Context, chatId: String, keep: Set<String>, preserveAfter: Long) {
+        try {
+            val items = load(ctx).toMutableList()
+            val gone = ArrayList<String>()
+            items.removeAll { raw ->
+                val p = raw.split("|")
+                val sameChat = p.getOrNull(0) == chatId
+                val id = p.getOrNull(1) ?: ""
+                val ts = p.getOrNull(2)?.toLongOrNull() ?: 0L
+                val remove = sameChat && id !in keep && ts <= preserveAfter
+                if (remove && id.isNotBlank()) gone.add(id)
+                remove
+            }
+            gone.forEach { MediaCache.delete(ctx, it) }
+            save(ctx, items)
         } catch (t: Throwable) { }
     }
 

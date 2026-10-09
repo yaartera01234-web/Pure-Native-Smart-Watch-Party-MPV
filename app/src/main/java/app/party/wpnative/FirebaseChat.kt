@@ -22,6 +22,13 @@ import com.google.firebase.firestore.SetOptions
  */
 object FirebaseChat {
 
+    /**
+     * Har chat mein **itne messages** rahenge — phone par bhi, Firestore par bhi.
+     * 121waana purana message **hamesha ke liye** mit jata hai (phone se bhi,
+     * Firestore se bhi). Boss ka hukm: 120.
+     */
+    const val MSG_KEEP = 120
+
     /** Ek baar check kar ke yaad rakh lete hain (baar baar try/catch na chale). */
     private var readyState: Boolean? = null
 
@@ -45,13 +52,13 @@ object FirebaseChat {
 
     // ------------------------------------------------------------ messages
 
-    /** Bhejo. Local id turant mil jati hai (cache ke liye). */
-    fun send(ctx: Context, chatId: String, m: ChatMsg): Boolean {
+    /** Bhejo. Local id turant; server ne pakka save kiya to `onSaved`. */
+    fun send(ctx: Context, chatId: String, m: ChatMsg, onSaved: (() -> Unit)? = null): Boolean {
         if (!isReady(ctx)) return false
         return try {
             val doc = msgs(ctx, chatId).document()
             m.id = doc.id
-            doc.set(m.toMap())
+            doc.set(m.toMap()).addOnSuccessListener { onSaved?.invoke() }
             true
         } catch (t: Throwable) {
             false
@@ -85,6 +92,82 @@ object FirebaseChat {
                 .addOnSuccessListener { onDone(true) }
                 .addOnFailureListener { onDone(false) }
         } catch (t: Throwable) { onDone(false) }
+    }
+
+    /**
+     * **120 se upar purane messages hamesha ke liye mitao** — Firestore se bhi.
+     *
+     * `cutTs = 0`: chat khulte hi naye 120 laa kar un se purane sab mita deta hai.
+     * Wahi 120 `onDone` ko bhi milte hain, is liye alag 20-read query nahi chalti.
+     * `cutTs > 0`: naya message bhejte waqt sirf is waqt se purane mita deta hai.
+     *
+     * `onDone(null)` ka matlab internet/query fail — phone ka cache tab nahi chhedenge.
+     */
+    fun prune(
+        ctx: Context,
+        chatId: String,
+        cutTs: Long = 0L,
+        onDone: ((List<ChatMsg>?) -> Unit)? = null
+    ) {
+        if (!isReady(ctx)) { onDone?.invoke(null); return }
+        if (cutTs > 0L) {
+            deleteOlder(ctx, chatId, cutTs, 50) { onDone?.invoke(emptyList()) }
+            return
+        }
+        try {
+            msgs(ctx, chatId)
+                .orderBy("ts", Query.Direction.DESCENDING)
+                .limit(MSG_KEEP.toLong())
+                .get()
+                .addOnSuccessListener { snap ->
+                    val latest = snap.documents.mapNotNull { d ->
+                        d.data?.let { ChatMsg.fromMap(d.id, it) }
+                    }
+                    if (snap.size() < MSG_KEEP) {
+                        onDone?.invoke(latest.asReversed())
+                        return@addOnSuccessListener
+                    }
+                    // `cut` khud 120waana message hai — sirf us se PURANE mitao,
+                    // warna galti se 120waana bhi mit kar 119 reh jayenge.
+                    val cut = snap.documents.lastOrNull()?.getLong("ts") ?: 0L
+                    if (cut <= 0L) { onDone?.invoke(latest.asReversed()); return@addOnSuccessListener }
+                    deleteOlder(ctx, chatId, cut, 400) {
+                        onDone?.invoke(latest.asReversed())
+                    }
+                }
+                .addOnFailureListener { onDone?.invoke(null) }
+        } catch (t: Throwable) { onDone?.invoke(null) }
+    }
+
+    /** `cut` se sakht purane messages batches mein mitao (120waana khud mehfooz). */
+    private fun deleteOlder(
+        ctx: Context,
+        chatId: String,
+        cut: Long,
+        limit: Long,
+        onDone: () -> Unit
+    ) {
+        try {
+            msgs(ctx, chatId)
+                .whereLessThan("ts", cut)
+                .limit(limit)
+                .get()
+                .addOnSuccessListener { snap ->
+                    val docs = snap.documents
+                    if (docs.isEmpty()) { onDone(); return@addOnSuccessListener }
+                    val batch = db(ctx).batch()
+                    docs.forEach { batch.delete(it.reference) }
+                    batch.commit()
+                        .addOnSuccessListener {
+                            // 400 se zyada purane thay to agla batch; fail ho to agli
+                            // dafa chat khulne par phir koshish ho jayegi.
+                            if (docs.size >= limit) deleteOlder(ctx, chatId, cut, limit, onDone)
+                            else onDone()
+                        }
+                        .addOnFailureListener { onDone() }
+                }
+                .addOnFailureListener { onDone() }
+        } catch (t: Throwable) { onDone() }
     }
 
     /** Upar scroll: is se bhi purane `limit` messages. */

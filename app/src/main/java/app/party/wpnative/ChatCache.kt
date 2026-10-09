@@ -5,15 +5,18 @@ import org.json.JSONArray
 import java.io.File
 
 /**
- * Phone ka chhota cache: **har chat ke aakhri 100 messages** (JSON file).
+ * Phone ka chhota cache: **har chat ke aakhri 120 messages** (JSON file).
  *
  * Fayda: chat turant khulti hai (Firebase ka intezar nahi), aur baar baar
- * wahi 20-100 messages download nahi hote -> reads bachti hain, koi hang nahi.
+ * wahi messages dobara download nahi hote -> reads bachti hain, koi hang nahi.
  */
 object ChatCache {
 
-    /** Screen/RAM mein itne messages (100 se upar hone par purane trim). */
-    const val MAX = 100
+    /**
+     * Phone mein **har chat ke aakhri 120 messages** (Boss ka hukm).
+     * 121waana purana message phone se bhi mit jata hai aur Firestore se bhi.
+     */
+    const val MAX = FirebaseChat.MSG_KEEP
 
     private fun file(ctx: Context, chatId: String): File =
         File(ctx.filesDir, "chat_" + chatId.replace(Regex("[^A-Za-z0-9_.\\-]"), "_") + ".json")
