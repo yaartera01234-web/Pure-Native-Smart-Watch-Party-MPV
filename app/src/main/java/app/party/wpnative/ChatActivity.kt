@@ -4,7 +4,11 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -292,7 +296,7 @@ class ChatActivity : Activity() {
         // --- bubble ---
         val bubble = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(13), dp(9), dp(13), dp(9))
+            setPadding(dp(14), dp(10), dp(14), dp(10))
             background = if (m.own) {
                 GradientDrawable(GradientDrawable.Orientation.TL_BR,
                     intArrayOf(hex("#5b21b6"), hex("#9333ea"), hex("#db2777"))).apply { cornerRadius = dp(22).toFloat() }
@@ -308,7 +312,7 @@ class ChatActivity : Activity() {
             lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(5) })
         bubble.addView(TextView(this).apply {
             text = m.text
-            textSize = 13.5f
+            textSize = 14f
             setTextColor(if (m.own) Color.WHITE else hex("#f3efff"))
             setLineSpacing(0f, 1.45f)
         })
@@ -442,13 +446,16 @@ class ChatActivity : Activity() {
         m.rx.forEach { (emoji, mine) ->
             box.addView(TextView(this).apply {
                 text = "$emoji 1"
-                textSize = 12f
+                textSize = 12.5f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(Color.WHITE)      // dim dikhne ki wajah: text color set hi nahi tha
                 gravity = Gravity.CENTER
-                setPadding(dp(7), 0, dp(7), 0)
+                minHeight = dp(22)
+                setPadding(dp(9), dp(1), dp(9), dp(1))
                 background = GradientDrawable().apply {
-                    setColor(if (mine) Color.argb(87, 244, 114, 182) else Color.argb(204, 8, 8, 24))
+                    setColor(if (mine) Color.argb(150, 244, 114, 182) else Color.argb(235, 34, 26, 62))
                     cornerRadius = dp(12).toFloat()
-                    setStroke(dp(1), if (mine) hex("#f472b6") else Color.argb(61, 255, 255, 255))
+                    setStroke(dp(1), if (mine) hex("#f472b6") else Color.argb(120, 255, 255, 255))
                 }
                 setOnClickListener { toggleRx(m, emoji) }
             }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(4) })
