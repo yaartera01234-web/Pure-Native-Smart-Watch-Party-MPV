@@ -125,6 +125,7 @@ class MainActivity : Activity() {
         restoreAvatar()
         saveFcmToken()
         BgMsgService.start(this)      // app band hone pe bhi notification
+        MediaCleanup.runIfDue(this)   // 3 din purani photo/voice Firestore+phone se hat jayen
     }
 
     /** Android 13+ par notification ki ijazat (push ke liye zaroori). */

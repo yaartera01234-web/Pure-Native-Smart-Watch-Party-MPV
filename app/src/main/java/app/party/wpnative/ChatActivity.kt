@@ -137,6 +137,7 @@ class ChatActivity : Activity(), ChatHost {
         peerColor = pickColor(peer)
         me = WpUser.me(this)
         chatId = WpUser.chatId(me, peer)
+        MediaCleanup.runIfDue(this)     // 3 din purani photo/voice khud mit jayen
         setContentView(buildScreen())
 
         // 1) Phone ka cache — chat turant khul jaye (Firebase ka intezar nahi)
@@ -779,6 +780,8 @@ class ChatActivity : Activity(), ChatHost {
         if (cm.media.isNotBlank() && key.isNotBlank() && !MediaCache.has(this, key)) {
             MediaCache.unb64(cm.media)?.let { MediaCache.save(this, key, it) }
         }
+        // Firestore mein is message ke sath asli media hai -> 3 din baad khud mit jaye
+        if (cm.type != "text") MediaCleanup.note(this, chatId, cm.id, cm.ts)
         return Msg(
             id = nextId++,
             text = cm.text,
@@ -918,6 +921,7 @@ class ChatActivity : Activity(), ChatHost {
             MediaCache.rename(this, key, cm.id)   // ab chaabi = asli id
             m.fid = cm.id
             m.mediaKey = cm.id
+            MediaCleanup.note(this, chatId, cm.id, now)   // 3 din baad apne aap mit jaye
         }
         trimToLimit()
         saveCache()
@@ -1001,6 +1005,7 @@ class ChatActivity : Activity(), ChatHost {
             MediaCache.rename(this, key, cm.id)   // ab chaabi = asli id
             m.fid = cm.id
             m.mediaKey = cm.id
+            MediaCleanup.note(this, chatId, cm.id, now)   // 3 din baad apne aap mit jaye
         }
         trimToLimit()
         saveCache()

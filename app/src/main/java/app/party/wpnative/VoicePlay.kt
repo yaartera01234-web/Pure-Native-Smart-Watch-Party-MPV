@@ -11,29 +11,58 @@ import java.io.File
  *
  * Ek waqt mein sirf ek awaaz chale (dusri dabate hi pehli ruk jaye) —
  * website bhi yahi karti hai.
+ *
+ * Naya: **aage peechhe** bhi kar sakte hain —
+ *   - ▶/⏸ se roko (jahin ruki wahin se phir chalegi, shuru se nahi)
+ *   - waveform par ungli rakho/ghumao (scrub) -> usi jagah se chalegi
  */
 object VoicePlay {
 
-    /** Chalte waqt har 100ms: (chaabi, kitna chala 0..1, kitne second baqi). */
+    /** Har 100ms aur har seek par: (chaabi, kitna chala 0..1, kitne second baqi). */
     var onTick: ((String, Float, Int) -> Unit)? = null
     /** Khatam / roka gaya: (chaabi). */
     var onStop: ((String) -> Unit)? = null
 
     private var mp: MediaPlayer? = null
     private var key: String? = null
+    private var dur = 0                 // poori lambai (millisecond)
     private val handler = Handler(Looper.getMainLooper())
     private var tick: Runnable? = null
 
-    /** Abhi kaun si awaaz chal rahi hai (koi nahi to null). */
-    fun playing(): String? = if (mp?.isPlaying == true) key else null
+    /** Ye awaaz abhi chal rahi hai? */
+    fun playing(k: String): Boolean = k.isNotBlank() && key == k && mp?.isPlaying == true
 
-    /** ▶ dabaya: agar yahi chal rahi ho to ruko, warna (dobara) chalao. */
+    /** Kaunsi awaaz abhi "pakdi" hui hai (chale ya ruki ho — dono)? */
+    fun current(): String? = key
+
+    /** 0..1 — kitna chal chuka (ruki hui ho to jahan ruki hai wahan ka). */
+    fun progressOf(k: String): Float {
+        if (k.isBlank() || key != k) return 0f
+        if (dur <= 0) return 0f
+        return (pos().toFloat() / dur).coerceIn(0f, 1f)
+    }
+
+    /** Kitne second baqi hain (ruki hui ho to bhi sahi jawab). */
+    fun remainOf(k: String): Int {
+        if (k.isBlank() || key != k) return 0
+        if (dur <= 0) return 0
+        return Math.max(0, (dur - pos()) / 1000)
+    }
+
+    private fun pos(): Int = try { mp?.currentPosition ?: 0 } catch (t: Throwable) { 0 }
+
+    /** ▶ dabaya: chal rahi ho to ruko, ruki ho to wahin se phir chalao. */
     fun toggle(ctx: Context, k: String) {
         if (k.isBlank()) return
         val cur = mp
         if (cur != null && key == k) {
-            if (cur.isPlaying) { pause(); return }
-            try { cur.start(); startTick(k) } catch (t: Throwable) { fire(k, 0f, 0) }
+            if (cur.isPlaying) {
+                try { cur.pause() } catch (t: Throwable) {}
+                stopTick()
+                fire(k)                     // ▶ wapas + jahan ruki wahin ki lakiren
+            } else {
+                try { cur.start(); startTick(k) } catch (t: Throwable) { fire(k) }
+            }
             return
         }
         stop()
@@ -42,25 +71,31 @@ object VoicePlay {
         try {
             val p = MediaPlayer()
             p.setDataSource(f.absolutePath)
-            p.setOnCompletionListener { fire(k, 1f, 0); stop() }
+            p.setOnCompletionListener { fire(k); stop() }
             p.setOnErrorListener { _, _, _ -> stop(); true }
             p.prepare()
+            dur = p.duration
             p.start()
             mp = p
             key = k
             startTick(k)
+            fire(k)
         } catch (t: Throwable) {
             try { mp?.release() } catch (t2: Throwable) {}
-            mp = null; key = null
+            mp = null; key = null; dur = 0
         }
     }
 
-    private fun pause() {
-        val k = key ?: return
-        try { mp?.pause() } catch (t: Throwable) {}
-        stopTick()
-        val pos = try { mp?.currentPosition ?: 0 } catch (t: Throwable) { 0 }
-        fire(k, prog(pos), remain(pos))
+    /** Waveform par ungli -> usi jagah se chalao (scrub). */
+    fun seek(ctx: Context, k: String, frac: Float) {
+        if (k.isBlank()) return
+        if (key != k) { toggle(ctx, k); if (key != k) return }
+        val p = mp ?: return
+        val to = (dur * frac.coerceIn(0f, 1f)).toInt()
+        try { p.seekTo(to) } catch (t: Throwable) {}
+        if (!p.isPlaying) { try { p.start() } catch (t: Throwable) {} }
+        startTick(k)
+        fire(k)
     }
 
     /** Rok do (jab screen band ho ya koi aur awaaz chale). */
@@ -69,7 +104,7 @@ object VoicePlay {
         val k = key
         try { mp?.stop() } catch (t: Throwable) {}
         try { mp?.release() } catch (t: Throwable) {}
-        mp = null; key = null
+        mp = null; key = null; dur = 0
         if (k != null) onStop?.invoke(k)
     }
 
@@ -79,8 +114,7 @@ object VoicePlay {
             override fun run() {
                 val p = mp ?: return
                 if (p.isPlaying) {
-                    val pos = try { p.currentPosition } catch (t: Throwable) { 0 }
-                    fire(k, prog(pos), remain(pos))
+                    fire(k)
                     handler.postDelayed(this, 100L)
                 }
             }
@@ -90,15 +124,7 @@ object VoicePlay {
 
     private fun stopTick() { tick?.let { handler.removeCallbacks(it) }; tick = null }
 
-    private fun prog(pos: Int): Float {
-        val d = try { mp?.duration ?: 0 } catch (t: Throwable) { 0 }
-        return if (d > 0) (pos.toFloat() / d).coerceIn(0f, 1f) else 0f
+    private fun fire(k: String) {
+        try { onTick?.invoke(k, progressOf(k), remainOf(k)) } catch (t: Throwable) {}
     }
-
-    private fun remain(pos: Int): Int {
-        val d = try { mp?.duration ?: 0 } catch (t: Throwable) { 0 }
-        return if (d > 0) Math.max(0, (d - pos) / 1000) else 0
-    }
-
-    private fun fire(k: String, p: Float, rem: Int) { try { onTick?.invoke(k, p, rem) } catch (t: Throwable) {} }
 }

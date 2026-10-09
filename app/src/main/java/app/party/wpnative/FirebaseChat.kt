@@ -2,6 +2,7 @@ package app.party.wpnative
 
 import android.content.Context
 import com.google.firebase.FirebaseApp
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
@@ -69,6 +70,21 @@ object FirebaseChat {
                 onDone(out.asReversed())          // purane upar, naye neeche
             }
             .addOnFailureListener { onDone(emptyList()) }
+    }
+
+    /**
+     * Message se **photo/voice ka asli maal (base64) hata do** — 3 din baad.
+     * Baqi sab (text, waqt, second) wahin rahta hai, bas media jati hai.
+     * (Firestore TTL Blaze par hi milti hai — ye hamara apna, muft tareeqa hai.)
+     */
+    fun dropMedia(ctx: Context, chatId: String, msgId: String, onDone: (Boolean) -> Unit) {
+        if (!isReady(ctx) || chatId.isBlank() || msgId.isBlank()) { onDone(false); return }
+        try {
+            msgs(ctx, chatId).document(msgId)
+                .update("media", FieldValue.delete())
+                .addOnSuccessListener { onDone(true) }
+                .addOnFailureListener { onDone(false) }
+        } catch (t: Throwable) { onDone(false) }
     }
 
     /** Upar scroll: is se bhi purane `limit` messages. */

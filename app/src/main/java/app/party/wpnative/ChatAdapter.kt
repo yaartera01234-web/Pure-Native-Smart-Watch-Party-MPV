@@ -262,6 +262,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             }
             voiceWrap.addView(playBtn, LinearLayout.LayoutParams(host.dp(34), host.dp(34)))
             waveV = VoiceWave(host.ctx(), mine)
+            waveV.onSeek = { f -> seekVoice(f) }        // ungli se aage peechhe
             voiceWrap.addView(waveV, LinearLayout.LayoutParams(host.dp(108), host.dp(26)).apply {
                 leftMargin = host.dp(9)                          // website: gap 9px
                 rightMargin = host.dp(9)
@@ -459,18 +460,38 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
 
         /** ▶ / ⏸ aur second — abhi kya chal raha hai usi hisaab se. */
         private fun syncVoice(m: Msg, prog: Float = 0f, rem: Int? = null) {
-            val on = m.mediaKey.isNotBlank() && VoicePlay.playing() == m.mediaKey
+            val has = m.mediaKey.isNotBlank() && MediaCache.has(host.ctx(), m.mediaKey)
+            val isCur = m.mediaKey.isNotBlank() && VoicePlay.current() == m.mediaKey
+            val on = VoicePlay.playing(m.mediaKey)
             playBtn.text = if (on) "\u23F8" else "\u25B6"
-            waveV.setProgress(if (on) prog else 0f)
-            durTv.text = fmtDur(if (on && rem != null) rem else m.dur)
+            playBtn.alpha = if (has) 1f else 0.35f          // media mit chuki -> ▶ bejan
+            // ruki hui ho to bhi wahin se (shuru se nahi) — is liye current() dekha
+            waveV.setProgress(
+                if (isCur) VoicePlay.progressOf(m.mediaKey)
+                else if (has) prog else 0f
+            )
+            durTv.text = fmtDur(
+                if (isCur) VoicePlay.remainOf(m.mediaKey)
+                else if (rem != null) rem
+                else m.dur
+            )
         }
 
-        /** ▶ daba -> awaaz chale (ya ruk jaye). */
+        /** ▶ daba -> awaaz chale (ya ruki ho to wahin se phir chale). */
         private fun toggleVoice() {
             val m = bound ?: return
             if (m.mediaKey.isBlank()) return
             if (!MediaCache.has(host.ctx(), m.mediaKey)) return
             VoicePlay.toggle(host.ctx(), m.mediaKey)
+            syncVoice(m)
+        }
+
+        /** Waveform par ungli -> usi jagah se suno (aage/peeche). */
+        private fun seekVoice(frac: Float) {
+            val m = bound ?: return
+            if (m.mediaKey.isBlank()) return
+            if (!MediaCache.has(host.ctx(), m.mediaKey)) return
+            VoicePlay.seek(host.ctx(), m.mediaKey, frac)
             syncVoice(m)
         }
 
@@ -491,13 +512,28 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         /** Phone mein padi photo uthao (background mein) aur bubble mein lagao. */
         private fun loadPhoto(m: Msg) {
             if (m.mediaKey.isBlank()) { photo.setImageDrawable(null); photoKey = null; return }
-            if (photoKey == m.mediaKey) return          // pehle hi lagi hui hai
+            // 3 din baad media mit chuki (MediaCleanup) -> website .ph4 jaisa khali dabba
+            if (!MediaCache.has(host.ctx(), m.mediaKey)) {
+                photo.setImageDrawable(null)
+                photoKey = m.mediaKey
+                photo.background = gonePhotoBox()
+                return
+            }
+            if (photoKey == m.mediaKey && photo.drawable != null) return   // pehle hi lagi hui hai
             photoKey = m.mediaKey
             photo.setImageDrawable(null)
+            photo.background = host.roundBox(Color.argb(31, 255, 255, 255),
+                Color.argb(46, 255, 255, 255), 12, 1)
             MediaCache.bitmapAsync(host.ctx(), m.mediaKey) { bmp ->
                 if (photoKey == m.mediaKey && bmp != null) photo.setImageBitmap(bmp)
             }
         }
+
+        /** Photo mit chuki (3 din) — website .ph4 wala gradient dabba. */
+        private fun gonePhotoBox(): GradientDrawable = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(host.hex("#2b2a52"), host.hex("#4b2a63"), host.hex("#6b2f5c"))
+        ).apply { cornerRadius = host.dp(12).toFloat() }
 
         /** Tap → poori screen par photo. */
         private fun openFullPhoto() {

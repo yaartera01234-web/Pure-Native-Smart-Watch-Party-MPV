@@ -51,6 +51,30 @@ object MediaCache {
         } catch (t: Throwable) { }
     }
 
+    /** Phone se ye media mita do (jab Firestore se bhi hat chuki ho). */
+    fun delete(ctx: Context, key: String) {
+        try { file(ctx, key).delete() } catch (t: Throwable) { }
+    }
+
+    /**
+     * Phone ki woh purani media mitao jo ab kahin kaam ki nahi.
+     * `keep` = woh chaabiyan jin ki media abhi Firestore mein maujood hai.
+     */
+    fun purgeOlderThan(ctx: Context, cutoff: Long, keep: Set<String>) {
+        try {
+            val dir = ctx.filesDir
+            val names = dir.list() ?: return
+            for (n in names) {
+                if (!n.startsWith("m_")) continue
+                val f = File(dir, n)
+                if (f.isDirectory || f.lastModified() > cutoff) continue
+                val key = n.removePrefix("m_")
+                if (keep.contains(key)) continue        // abhi chahiye — mat mitao
+                f.delete()
+            }
+        } catch (t: Throwable) { }
+    }
+
     fun load(ctx: Context, key: String): ByteArray? =
         try { val f = file(ctx, key); if (f.exists()) f.readBytes() else null } catch (t: Throwable) { null }
 

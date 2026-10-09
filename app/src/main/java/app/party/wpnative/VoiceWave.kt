@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
+import android.view.MotionEvent
 import android.view.View
 
 /**
@@ -33,11 +34,40 @@ class VoiceWave(ctx: Context, private val mine: Boolean) : View(ctx) {
     private var amp = FloatArray(BARS)
     private var prog = 0f
 
+    /** Ungli rakhi/ghumai to bataya jaye: 0..1 (kitni door se sun'na hai). */
+    var onSeek: ((Float) -> Unit)? = null
+
     /** played wala rang / baqi ka rang (website ke theek rang). */
     private val onCol = if (mine) Color.parseColor("#150c26") else Color.parseColor("#54e8ff")
     private val offCol = if (mine) Color.argb(77, 20, 8, 33) else Color.argb(107, 255, 255, 255)
 
-    init { setWave("") }
+    init {
+        setWave("")
+        isClickable = true      // ungli se aage peechhe (scrub)
+    }
+
+    /** Waveform par ungli -> usi jagah se chalao. */
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        val w = width.toFloat()
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)   // bubble ka swipe na chale
+                if (w > 0f) onSeek?.invoke((e.x / w).coerceIn(0f, 1f))
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (w > 0f) onSeek?.invoke((e.x / w).coerceIn(0f, 1f))
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                performClick()
+                return true
+            }
+        }
+        return super.onTouchEvent(e)
+    }
+
+    override fun performClick(): Boolean { super.performClick(); return true }
 
     /**
      * "12,40,80,..." wali kadi (har 100ms ki awaaz).
