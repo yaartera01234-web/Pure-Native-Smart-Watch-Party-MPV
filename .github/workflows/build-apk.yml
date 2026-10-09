@@ -33,7 +33,22 @@ jobs:
           gradle-version: 8.11.1
 
       - name: Build debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
+
+      # Fail ho to poora Gradle log branch par daal do (artefact download
+      # har jagah se possible nahi hota — log seedha padhne ke liye).
+      - name: Error log save karo
+        if: failure()
+        run: |
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@example.com"
+          git checkout -B ci-logs
+          cp /tmp/gradle.log gradle-error.log
+          git add -f gradle-error.log
+          git commit -m "gradle error log (run $GITHUB_RUN_ID)" || exit 0
+          git push -f origin ci-logs
 
       - name: Prepare artifact
         run: |
