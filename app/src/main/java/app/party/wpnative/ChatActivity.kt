@@ -826,7 +826,14 @@ class ChatActivity : Activity() {
         replyWho.text = if (m.own) "You" else peer
         replyWhat.text = m.text
         replyWrap.visibility = View.VISIBLE
+        // Website d4setReply() ki tarah: swipe karte hi likhne ka box khul jaye
+        // (sirf requestFocus se keyboard hamesha nahi khulta — IMM bhi bulana padta hai)
         input.requestFocus()
+        input.setSelection(input.text.length)
+        input.post {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+        }
     }
 
     private fun clearReply() {
