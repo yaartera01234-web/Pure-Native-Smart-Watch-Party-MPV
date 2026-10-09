@@ -25,11 +25,31 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import java.lang.ref.WeakReference
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Sirf Room ke 💬 se khule Inbox ko isi live Room par wapas laane ka route marker. */
-const val EXTRA_RETURN_TO_PARTY_ROOM = "opened_from_party_room"
+/**
+ * Original website mein DM ek overlay tha: Room kabhi destroy/recreate nahi hota tha.
+ * Native activities mein bhi wahi rule rakhne ke liye live Room ka weak route rakha hai.
+ */
+object PartyRoomRoute {
+    private var live: WeakReference<PartyRoomActivity>? = null
+
+    fun attach(room: PartyRoomActivity) { live = WeakReference(room) }
+    fun detach(room: PartyRoomActivity) {
+        if (live?.get() === room) { live?.clear(); live = null }
+    }
+
+    fun returnToLiveRoom(from: Activity): Boolean {
+        val room = live?.get() ?: return false
+        if (room.isFinishing || room.isDestroyed) return false
+        from.startActivity(Intent(from, PartyRoomActivity::class.java).addFlags(
+            Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        from.overridePendingTransition(0, 0)
+        return true
+    }
+}
 
 /**
  * Enter Party ke baad wali **native Party Room** screen.
@@ -47,6 +67,7 @@ class PartyRoomActivity : Activity() {
         val accent: IntArray,
         val glowA: Int,
         val glowB: Int,
+        val glowC: Int,
         val panel: IntArray,
         val head: IntArray,
         val input: IntArray
@@ -55,33 +76,35 @@ class PartyRoomActivity : Activity() {
     private val prefs by lazy { getSharedPreferences("wp_native", Context.MODE_PRIVATE) }
     private val palettes by lazy {
         listOf(
-            Palette("Lobby Neon", cols("#050719", "#0b1327", "#050719"),
+            Palette("Lobby Neon", cols("#050719", "#050719"),
                 cols("#fa35de", "#c03cff", "#36d9fa"), hex("#42721d75"), hex("#3d146183"),
-                cols("#e81e1431", "#e80d1d33"), cols("#ed231036", "#ed111b34"),
-                cols("#ff2a153c", "#ff132a40")),
+                Color.TRANSPARENT, cols("#e81e1431", "#e80d1d33"),
+                cols("#ed231036", "#ed111b34"), cols("#ff2a153c", "#ff132a40")),
             Palette("Night Purple", cols("#080812", "#17132f", "#0a1127"),
                 cols("#ff66bd", "#a477ff", "#55baff"), hex("#3dff64c3"), hex("#3d5b7eff"),
-                cols("#b81c183b", "#8c080918"), cols("#94060713", "#94060713"),
-                cols("#78080818", "#78080818")),
-            Palette("Ocean Cyan", cols("#051219", "#082129", "#051219"),
+                hex("#2e6f49d9"), cols("#b81c183b", "#8c080918"),
+                cols("#94060713", "#94060713"), cols("#78080818", "#78080818")),
+            Palette("Ocean Cyan", cols("#051219", "#051219"),
                 cols("#358efa", "#3cb7ff", "#36faed"), hex("#421d5575"), hex("#3d14837c"),
-                cols("#e8142631", "#e80d3330"), cols("#ed102836", "#ed113432"),
-                cols("#ff152e3c", "#ff13403d")),
-            Palette("Sunset Rose", cols("#19050c", "#261018", "#19050c"),
+                Color.TRANSPARENT, cols("#e8142631", "#e80d3330"),
+                cols("#ed102836", "#ed113432"), cols("#ff152e3c", "#ff13403d")),
+            Palette("Sunset Rose", cols("#19050c", "#19050c"),
                 cols("#fa3549", "#ff3c83", "#fa8e36"), hex("#42751d3d"), hex("#3d834614"),
-                cols("#e831141f", "#e8331e0d"), cols("#ed36101e", "#ed342111"),
-                cols("#ff3c1523", "#ff402713")),
-            Palette("Emerald Glow", cols("#05190f", "#0a271d", "#05190f"),
+                Color.TRANSPARENT, cols("#e831141f", "#e8331e0d"),
+                cols("#ed36101e", "#ed342111"), cols("#ff3c1523", "#ff402713")),
+            Palette("Emerald Glow", cols("#05190f", "#05190f"),
                 cols("#35fac5", "#3cff9e", "#36eafa"), hex("#421d7549"), hex("#3d147a83"),
-                cols("#e8143123", "#e80d3033"), cols("#ed103623", "#ed113134"),
-                cols("#ff153c29", "#ff133c40")),
-            Palette("Champagne Gold", cols("#191305", "#28210d", "#191305"),
+                Color.TRANSPARENT, cols("#e8143123", "#e80d3033"),
+                cols("#ed103623", "#ed113134"), cols("#ff153c29", "#ff133c40")),
+            Palette("Champagne Gold", cols("#191305", "#191305"),
                 cols("#e88f47", "#eabc51", "#e8db48"), hex("#42755b1d"), hex("#3d837a14"),
-                cols("#e8312814", "#e833300d"), cols("#ed362b10", "#ed343111"),
-                cols("#ff3c3015", "#ff403c13"))
+                Color.TRANSPARENT, cols("#e8312814", "#e833300d"),
+                cols("#ed362b10", "#ed343111"), cols("#ff3c3015", "#ff403c13"))
         )
     }
     private var themeIndex = 1
+    private var appliedThemeIndex = -1
+    private lateinit var roomBackdrop: PartyRoomBackdrop
     private val palette: Palette get() = palettes[themeIndex]
 
     private fun dp(v: Float): Int = (v * resources.displayMetrics.density).roundToInt()
@@ -91,15 +114,57 @@ class PartyRoomActivity : Activity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        PartyRoomRoute.attach(this)
         themeIndex = prefs.getInt("theme", 1).coerceIn(palettes.indices)
         window.statusBarColor = Color.BLACK
         window.navigationBarColor = Color.BLACK
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        applyWindowBase()
         setContentView(buildRoom())
     }
 
+    /**
+     * Smart Music website mein DM close hote hi wahi #app dobara paint hota tha.
+     * Native mein Activity surface cover/uncover hoti hai, isliye resume par saved
+     * theme dobara verify karke background render-node ko explicitly zinda karte hain.
+     */
+    override fun onResume() {
+        super.onResume()
+        val saved = prefs.getInt("theme", 1).coerceIn(palettes.indices)
+        if (saved != appliedThemeIndex) {
+            themeIndex = saved
+            applyWindowBase()
+            setContentView(buildRoom())
+        } else {
+            applyWindowBase()
+        }
+        window.decorView.animate().cancel()
+        window.decorView.alpha = 1f
+        if (::roomBackdrop.isInitialized) roomBackdrop.restoreColors()
+    }
+
+    override fun onNewIntent(newIntent: Intent?) {
+        super.onNewIntent(newIntent)
+        if (newIntent != null) setIntent(newIntent)
+        window.decorView.alpha = 1f
+        if (::roomBackdrop.isInitialized) roomBackdrop.restoreColors()
+    }
+
+    override fun onDestroy() {
+        PartyRoomRoute.detach(this)
+        super.onDestroy()
+    }
+
+    private fun applyWindowBase() {
+        window.setBackgroundDrawable(GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            palette.page.copyOf()))
+    }
+
     private fun buildRoom(): View {
-        val root = PartyRoomBackdrop(this, palette.page, palette.glowA, palette.glowB)
+        val root = PartyRoomBackdrop(this, palette.page.copyOf(), palette.glowA, palette.glowB,
+            palette.glowC, themeIndex == 1)
+        roomBackdrop = root
+        appliedThemeIndex = themeIndex
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(buildHeader(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -169,8 +234,7 @@ class PartyRoomActivity : Activity() {
                 // Yahan CLEAR_TOP bilkul nahi: Room ke upar ek Inbox khulta hai,
                 // isliye Android back/gesture naturally isi Room par wapas laata hai.
                 // Baqi jagah se Inbox khulne ka route bilkul nahi badalta.
-                startActivity(Intent(this@PartyRoomActivity, InboxActivity::class.java)
-                    .putExtra(EXTRA_RETURN_TO_PARTY_ROOM, true))
+                startActivity(Intent(this@PartyRoomActivity, InboxActivity::class.java))
                 overridePendingTransition(0, 0)
             }
         }
@@ -247,6 +311,7 @@ class PartyRoomActivity : Activity() {
                             themeIndex = index
                             prefs.edit().putInt("theme", themeIndex).apply()
                             dialog?.dismiss()
+                            applyWindowBase()
                             setContentView(buildRoom())
                         }
                     }
@@ -543,37 +608,76 @@ private class RavePlayerSlot(ctx: Context) : FrameLayout(ctx) {
     }
 }
 
-/** Selected website theme ka exact dark page base, aurora glows aur subtle 5px texture. */
+/**
+ * Selected website theme ka exact dark page base, aurora glows aur subtle 5px texture.
+ *
+ * Base ab normal Android Drawable hai (surface resume par kabhi blank nahi hota), aur
+ * aurora [dispatchDraw] mein har child-frame ke sath dobara composite hoti hai. Pehle
+ * sirf FrameLayout.onDraw display-list par thi; DM Activity se wapas aate waqt kuch
+ * devices us cached layer ko bina aurora ke restore kar rahe the — wahi "rang urrna" tha.
+ */
 private class PartyRoomBackdrop(
     ctx: Context,
     private val page: IntArray,
     private val glowA: Int,
-    private val glowB: Int
+    private val glowB: Int,
+    private val glowC: Int,
+    private val purpleLayout: Boolean
 ) : FrameLayout(ctx) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    init { setWillNotDraw(false) }
 
-    override fun onDraw(c: Canvas) {
-        val w = width.toFloat(); val h = height.toFloat()
-        p.shader = LinearGradient(0f, 0f, w, h, page, null, Shader.TileMode.CLAMP)
-        c.drawRect(0f, 0f, w, h, p)
-        p.shader = RadialGradient(w * .08f, -h * .02f, w * .76f,
-            glowA, Color.TRANSPARENT, Shader.TileMode.CLAMP)
-        c.drawRect(0f, 0f, w, h * .66f, p)
-        p.shader = RadialGradient(w, 0f, w * .72f,
-            glowB, Color.TRANSPARENT, Shader.TileMode.CLAMP)
-        c.drawRect(0f, 0f, w, h * .64f, p)
-        p.shader = null
-        // HTML ka rgba(255,255,255,.05) dot texture: pehle wali double opacity nahi.
-        p.color = Color.argb(13, 255, 255, 255)
-        val step = resources.displayMetrics.density * 5f
-        var y = step
-        var row = 0
-        while (y < h * .85f) {
-            var x = if (row % 2 == 0) step else step * .5f
-            while (x < w) { c.drawCircle(x, y, .55f, p); x += step }
-            y += step; row++
+    init {
+        background = GradientDrawable(GradientDrawable.Orientation.TL_BR, page.copyOf())
+        setWillNotDraw(true)
+    }
+
+    fun restoreColors() {
+        animate().cancel()
+        alpha = 1f
+        visibility = View.VISIBLE
+        background?.alpha = 255
+        background?.invalidateSelf()
+        invalidate()
+        post {
+            background?.invalidateSelf()
+            invalidate()
+            (parent as? View)?.invalidate()
         }
+    }
+
+    override fun dispatchDraw(c: Canvas) {
+        val w = width.toFloat(); val h = height.toFloat()
+        if (w > 0f && h > 0f) {
+            if (purpleLayout) {
+                // Original default: pink top-left + blue top-right + purple bottom.
+                radial(c, w * .08f, -h * .10f, w * .80f, glowA, w, h)
+                radial(c, w, 0f, w * .76f, glowB, w, h)
+                radial(c, w * .50f, h * 1.15f, w * .90f, glowC, w, h)
+            } else {
+                // Original four/neon themes: first glow top-right, second bottom-left.
+                radial(c, w, 0f, w * .95f, glowA, w, h)
+                radial(c, 0f, h, w * .95f, glowB, w, h)
+            }
+
+            p.shader = null
+            // CSS: dot alpha .18 × body opacity .28 ≈ .05.
+            p.color = Color.argb(13, 255, 255, 255)
+            val step = resources.displayMetrics.density * 5f
+            var y = step
+            var row = 0
+            while (y < h * .85f) {
+                var x = if (row % 2 == 0) step else step * .5f
+                while (x < w) { c.drawCircle(x, y, .55f, p); x += step }
+                y += step; row++
+            }
+        }
+        super.dispatchDraw(c)
+    }
+
+    private fun radial(c: Canvas, x: Float, y: Float, radius: Float, color: Int, w: Float, h: Float) {
+        if (Color.alpha(color) == 0 || radius <= 0f) return
+        p.shader = RadialGradient(x, y, radius, color, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, w, h, p)
     }
 }
 
