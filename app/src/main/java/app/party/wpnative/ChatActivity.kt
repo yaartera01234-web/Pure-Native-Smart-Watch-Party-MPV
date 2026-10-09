@@ -394,7 +394,7 @@ class ChatActivity : Activity() {
             row.addView(av, lp(dp(34), dp(34)))
             row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
         }
-        bindSwipe(row, m, handle)
+        bindSwipe(row, bubble, m, handle)
         return row
     }
 
@@ -403,7 +403,7 @@ class ChatActivity : Activity() {
      * dayen swipe -> 12dp par pakad, zyada se zyada 110dp slide,
      * 60dp se zyada par chhodne par reply set, 200ms mein wapas.
      */
-    private fun bindSwipe(row: View, m: Msg, handle: TextView) {
+    private fun bindSwipe(row: View, touchOn: View, m: Msg, handle: TextView) {
         val startAt = dp(12).toFloat()
         val maxSlide = dp(110).toFloat()
         val fireAt = dp(60).toFloat()
@@ -412,7 +412,7 @@ class ChatActivity : Activity() {
         var dx = 0f
         var swiping = false
 
-        row.setOnTouchListener { v, ev ->
+        val listener = View.OnTouchListener { v, ev ->
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     sx = ev.rawX; sy = ev.rawY; dx = 0f; swiping = false
@@ -421,7 +421,15 @@ class ChatActivity : Activity() {
                 MotionEvent.ACTION_MOVE -> {
                     val ddx = ev.rawX - sx
                     val ddy = ev.rawY - sy
-                    if (Math.abs(ddx) > startAt || Math.abs(ddy) > startAt) v.cancelLongPress()
+                    if (Math.abs(ddx) > startAt || Math.abs(ddy) > startAt) {
+                        v.cancelLongPress()
+                        touchOn.cancelLongPress()
+                    }
+                    // Jaldi pakdo: jab hi chal horizontal lage, ScrollView ko roko
+                    // (warna wo upar-neeche wali kheench samajh kar event chheen leta hai)
+                    if (!swiping && Math.abs(ddx) > dp(6) && Math.abs(ddx) > Math.abs(ddy)) {
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
                     if (!swiping && ddx > startAt && Math.abs(ddx) > Math.abs(ddy) * 1.5f) {
                         swiping = true
                         v.parent?.requestDisallowInterceptTouchEvent(true)
@@ -429,7 +437,7 @@ class ChatActivity : Activity() {
                     if (swiping) {
                         dx = ddx
                         val slide = Math.min(dx, maxSlide)
-                        v.translationX = slide
+                        row.translationX = slide
                         // ↩ nishan: jitni kheench utni roshni; 60dp ke baad hara (armed)
                         val prog = (slide / fireAt).coerceIn(0f, 1f)
                         handle.alpha = prog
@@ -445,7 +453,7 @@ class ChatActivity : Activity() {
                         false
                     } else {
                         val fire = dx > fireAt && ev.actionMasked == MotionEvent.ACTION_UP
-                        v.animate().translationX(0f).setDuration(200L)
+                        row.animate().translationX(0f).setDuration(200L)
                             .setInterpolator(DecelerateInterpolator()).start()
                         handle.animate().alpha(0f).scaleX(0.7f).scaleY(0.7f).rotation(0f).setDuration(180L).start()
                         v.parent?.requestDisallowInterceptTouchEvent(false)
@@ -458,6 +466,10 @@ class ChatActivity : Activity() {
                 else -> false
             }
         }
+        // Bubble par bhi: wo long-clickable hai, is liye wahi touch target banta hai.
+        // Row par bhi: avatar/khaali jagah se swipe karne ke liye.
+        touchOn.setOnTouchListener(listener)
+        row.setOnTouchListener(listener)
     }
 
     /** ↩ nishan ka background: neela (chal raha) / hara (chhodne par reply pakka). */
