@@ -680,7 +680,8 @@ class ChatActivity : Activity() {
         replyBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            visibility = View.GONE
+            // DHYAAN: yahan visibility GONE mat lagana — replyWrap hi chhupata/dikhata hai.
+            // (pehle yahan GONE tha, is liye reply patti kabhi dikhti hi nahi thi)
             setPadding(dp(10), dp(7), dp(10), dp(7))          // website: padding 7px 10px
             background = roundBox(Color.argb(23, 255, 255, 255), Color.argb(36, 255, 255, 255), 12, 1)
         }
