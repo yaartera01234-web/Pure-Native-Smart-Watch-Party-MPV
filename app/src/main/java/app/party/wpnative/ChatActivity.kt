@@ -90,6 +90,7 @@ class ChatActivity : Activity(), ChatHost {
 
     /** Kitne messages ek baar mein (chat khulte hi) aur upar scroll par. */
     private val PAGE = 20L
+    private val REQ_PHOTO = 77       // gallery se photo chunne ka code
 
     private lateinit var rv: RecyclerView
     private lateinit var lm: LinearLayoutManager
@@ -376,6 +377,7 @@ class ChatActivity : Activity(), ChatHost {
     /** Is line ka maal badla hai ya nahi — DiffUtil isi se pakad leta hai. */
     private fun sigOf(m: Msg): String =
         m.text + "|" + m.read + "|" + m.replyText + "|" + m.time + "|" + m.deleted + "|" +
+            m.type + "|" + m.mediaKey + "|" + m.dur + "|" +
             m.rx.entries.joinToString(",") { "${it.key}:${it.value}" }
 
     /** Dots dikhane/chhupane ka switch — asli chat mein server ke signal se chalega. */
@@ -459,7 +461,7 @@ class ChatActivity : Activity(), ChatHost {
             background = roundBox(Color.argb(23, 255, 255, 255), Color.argb(41, 255, 255, 255), 21, 1)
         }
         pill.addView(iconBtn("photo", intArrayOf(hex("#f59e0b"), hex("#ec4899"), hex("#8b5cf6"))) {
-            Toast.makeText(this@ChatActivity, "Photo agle step mein", Toast.LENGTH_SHORT).show()
+            openPhotoPicker()
         }, lp(dp(36), dp(36)).apply { rightMargin = dp(4) })
         pill.addView(iconBtn("mic", intArrayOf(hex("#06b6d4"), hex("#3b82f6"), hex("#8b5cf6"))) {
             Toast.makeText(this@ChatActivity, "Voice message agle step mein", Toast.LENGTH_SHORT).show()
@@ -707,19 +709,31 @@ class ChatActivity : Activity(), ChatHost {
         msgs.removeAll { it.fid.isNotBlank() && it.ts >= from && it.ts <= to && it.fid !in ids }
     }
 
-    private fun toMsg(cm: ChatMsg): Msg = Msg(
-        id = nextId++,
-        text = cm.text,
-        own = cm.from == me,
-        time = timeShort(cm.ts),
-        day = dayLabel(cm.ts),
-        read = cm.read,
-        replyName = cm.replyName,
-        replyText = cm.replyText,
-        fid = cm.id,
-        ts = cm.ts,
-        deleted = cm.deleted
-    )
+    private fun toMsg(cm: ChatMsg): Msg {
+        /* Photo/voice ka asli maal (base64) phone mein save kar lo —
+           baar baar Firestore se download na ho. Chaabi = asli id (warna L<waqt>). */
+        val key = if (cm.type == "text") "" else cm.id.ifBlank { "L${cm.ts}" }
+        if (cm.media.isNotBlank() && key.isNotBlank() && !MediaCache.has(this, key)) {
+            MediaCache.unb64(cm.media)?.let { MediaCache.save(this, key, it) }
+        }
+        return Msg(
+            id = nextId++,
+            text = cm.text,
+            own = cm.from == me,
+            time = timeShort(cm.ts),
+            day = dayLabel(cm.ts),
+            read = cm.read,
+            replyName = cm.replyName,
+            replyText = cm.replyText,
+            fid = cm.id,
+            ts = cm.ts,
+            deleted = cm.deleted,
+            type = cm.type,
+            mediaKey = key,
+            dur = cm.dur,
+            wave = cm.wave
+        )
+    }
 
     private fun newestTs(): Long = msgs.maxOfOrNull { it.ts } ?: 0L
     private fun oldestTs(): Long = msgs.minOfOrNull { it.ts } ?: 0L
@@ -747,10 +761,13 @@ class ChatActivity : Activity(), ChatHost {
     private fun saveCache() {
         ChatCache.save(this, chatId, msgs.map {
             ChatMsg(
-                id = if (it.fid.isNotBlank()) it.fid else "L${it.ts}_${it.id}",
+                id = if (it.fid.isNotBlank()) it.fid
+                     else if (it.mediaKey.isNotBlank()) it.mediaKey
+                     else "L${it.ts}_${it.id}",
                 from = if (it.own) me else peer,
                 text = it.text, ts = it.ts, read = it.read,
-                replyName = it.replyName, replyText = it.replyText
+                replyName = it.replyName, replyText = it.replyText,
+                type = it.type, dur = it.dur, wave = it.wave
             )
         })
     }
@@ -791,6 +808,61 @@ class ChatActivity : Activity(), ChatHost {
     }
 
     // ============================ KAAM ============================
+
+    // ------------------------------------------------------------ PHOTO
+
+    /** Gallery kholo (koi ijazat nahi chahiye — picker khud de deta hai). */
+    private fun openPhotoPicker() {
+        try {
+            val i = Intent(Intent.ACTION_GET_CONTENT).apply {
+                type = "image/*"
+                addCategory(Intent.CATEGORY_OPENABLE)
+            }
+            startActivityForResult(Intent.createChooser(i, "Photo chuno"), REQ_PHOTO)
+        } catch (t: Throwable) {
+            Toast.makeText(this, "Gallery nahi khul saki", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @Deprecated("purana API, par seedha Activity par theek chal raha hai")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_PHOTO || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        Toast.makeText(this, "Photo taiyar ho rahi hai...", Toast.LENGTH_SHORT).show()
+        Thread {
+            val bytes = MediaCache.compress(this, uri)      // badi photo dabao (Firestore 1MB had)
+            runOnUiThread {
+                if (bytes == null) Toast.makeText(this, "Photo load nahi hui", Toast.LENGTH_SHORT).show()
+                else sendPhoto(bytes)
+            }
+        }.start()
+    }
+
+    /** Photo bhejo: pehle apni screen par turant, phir Firestore par. */
+    private fun sendPhoto(bytes: ByteArray) {
+        val now = System.currentTimeMillis()
+        val key = "L$now"
+        MediaCache.save(this, key, bytes)
+
+        val m = Msg(nextId++, "", true, timeShort(now), dayLabel(now),
+            read = false, ts = now, type = "photo", mediaKey = key)
+        msgs.add(m)
+
+        val cm = ChatMsg(from = me, text = "", ts = now, type = "photo")
+        cm.media = MediaCache.b64(bytes)
+        if (FirebaseChat.send(this, chatId, cm)) {
+            MediaCache.rename(this, key, cm.id)   // ab chaabi = asli id
+            m.fid = cm.id
+            m.mediaKey = cm.id
+        }
+        trimToLimit()
+        saveCache()
+        animId = m.id
+        renderThread()
+        scrollBottom()
+        startLiveListener()
+    }
 
     private fun send() {
         val txt = input.text.toString().trim()

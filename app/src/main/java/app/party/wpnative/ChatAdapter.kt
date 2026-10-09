@@ -1,14 +1,17 @@
 package app.party.wpnative
 
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
@@ -119,6 +122,8 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         private val quoteName: TextView
         private val quoteText: TextView
         private val textTv: TextView
+        private val photo: ImageView
+        private var photoKey: String? = null
         private val handle: TextView
         private val chips: LinearLayout
         private val timeTv: TextView
@@ -187,6 +192,28 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = dp(5)
             })
+
+            // ---- photo (website: .chat-photo img max 220x300, radius 12) ----
+            photo = ImageView(host.ctx()).apply {
+                visibility = View.GONE
+                adjustViewBounds = true
+                maxWidth = host.dp(220)
+                maxHeight = host.dp(300)
+                minWidth = host.dp(150)
+                minHeight = host.dp(110)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                clipToOutline = true
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(v: View, o: Outline) {
+                        o.setRoundRect(0, 0, v.width, v.height, host.dp(12).toFloat())
+                    }
+                }
+                background = host.roundBox(Color.argb(31, 255, 255, 255),
+                    Color.argb(46, 255, 255, 255), 12, 1)
+                setOnClickListener { openFullPhoto() }
+            }
+            bubble.addView(photo, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
             textTv = TextView(host.ctx()).apply {
                 textSize = 14f
@@ -292,6 +319,17 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             nameTv.text = if (m.own) "You" else host.peerName()
             textTv.text = m.text
 
+            // photo wala message: bubble mein photo, (ho to) caption neeche
+            if (m.type == "photo" && m.mediaKey.isNotBlank()) {
+                photo.visibility = View.VISIBLE
+                textTv.visibility = if (m.text.isBlank()) View.GONE else View.VISIBLE
+                loadPhoto(m)
+            } else {
+                photo.visibility = View.GONE
+                if (photoKey != null) { photo.setImageDrawable(null); photoKey = null }
+                textTv.visibility = View.VISIBLE
+            }
+
             if (m.replyText.isNotBlank()) {
                 quote.visibility = View.VISIBLE
                 quoteName.text = m.replyName
@@ -339,6 +377,24 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                     .setInterpolator(DecelerateInterpolator(1.8f))
                     .start()
             }
+        }
+
+        /** Phone mein padi photo uthao (background mein) aur bubble mein lagao. */
+        private fun loadPhoto(m: Msg) {
+            if (m.mediaKey.isBlank()) { photo.setImageDrawable(null); photoKey = null; return }
+            if (photoKey == m.mediaKey) return          // pehle hi lagi hui hai
+            photoKey = m.mediaKey
+            photo.setImageDrawable(null)
+            MediaCache.bitmapAsync(host.ctx(), m.mediaKey) { bmp ->
+                if (photoKey == m.mediaKey && bmp != null) photo.setImageBitmap(bmp)
+            }
+        }
+
+        /** Tap → poori screen par photo. */
+        private fun openFullPhoto() {
+            val key = photoKey ?: bound?.mediaKey ?: return
+            val bmp = MediaCache.load(host.ctx(), key)?.let { MediaCache.decodeBytes(it) } ?: return
+            PhotoViewer.show(host.ctx(), bmp)
         }
 
         private fun rebuildChips(m: Msg) {

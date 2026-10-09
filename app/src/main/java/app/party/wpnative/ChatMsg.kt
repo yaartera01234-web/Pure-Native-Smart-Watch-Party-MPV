@@ -19,21 +19,30 @@ data class ChatMsg(
     var replyName: String = "",
     var replyText: String = "",
     var type: String = "text",
+    var media: String = "",        // photo/voice ka asli maal (base64) — SIRF Firestore ke liye
+    var dur: Int = 0,              // voice: kitne second
+    var wave: String = "",         // voice: har 100ms ki awaaz "12,40,80,..."
     var deleted: Boolean = false      // mita hua message (doosre phone ko bhi pata chale is liye)
 ) {
 
-    /** Firestore ke liye. */
-    fun toMap(): Map<String, Any> = mapOf(
-        "id" to id,
-        "from" to from,
-        "text" to text,
-        "ts" to ts,
-        "read" to read,
-        "replyName" to replyName,
-        "replyText" to replyText,
-        "type" to type,
-        "deleted" to deleted
-    )
+    /** Firestore ke liye. (media sirf tab, jab ho — document chhota rahe) */
+    fun toMap(): Map<String, Any> {
+        val m = linkedMapOf<String, Any>(
+            "id" to id,
+            "from" to from,
+            "text" to text,
+            "ts" to ts,
+            "read" to read,
+            "replyName" to replyName,
+            "replyText" to replyText,
+            "type" to type,
+            "dur" to dur,
+            "wave" to wave,
+            "deleted" to deleted
+        )
+        if (media.isNotBlank()) m["media"] = media
+        return m
+    }
 
     /** Phone ke cache ke liye. */
     fun toJson(): JSONObject = JSONObject().apply {
@@ -45,6 +54,8 @@ data class ChatMsg(
         put("replyName", replyName)
         put("replyText", replyText)
         put("type", type)
+        put("dur", dur)
+        put("wave", wave)
         put("deleted", deleted)
     }
 
@@ -64,6 +75,9 @@ data class ChatMsg(
             replyName = m["replyName"] as? String ?: "",
             replyText = m["replyText"] as? String ?: "",
             type = m["type"] as? String ?: "text",
+            media = m["media"] as? String ?: "",
+            dur = (m["dur"] as? Long)?.toInt() ?: 0,
+            wave = m["wave"] as? String ?: "",
             deleted = m["deleted"] as? Boolean ?: false
         )
 
@@ -77,6 +91,8 @@ data class ChatMsg(
             replyName = o.optString("replyName", ""),
             replyText = o.optString("replyText", ""),
             type = o.optString("type", "text"),
+            dur = o.optInt("dur", 0),
+            wave = o.optString("wave", ""),
             deleted = o.optBoolean("deleted", false)
         )
     }
