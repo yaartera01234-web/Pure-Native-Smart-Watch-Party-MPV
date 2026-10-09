@@ -96,6 +96,17 @@ class ChatActivity : Activity() {
     private lateinit var emojiWrap: FrameLayout
     private lateinit var flyLayer: FrameLayout      // Instagram wale udte emoji isi par chalte hain
     private lateinit var emojiInput: EditText
+    private lateinit var statusText: TextView     // header ka "Online" / "Offline • 12 min ago"
+    private lateinit var statusDotWrap: FrameLayout
+
+    // Website ki tarah har 5 second mein presence taaza karo (dmRefreshOnlineDots ka interval)
+    private val statusHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val statusTick = object : Runnable {
+        override fun run() {
+            refreshStatus()
+            statusHandler.postDelayed(this, 5000L)
+        }
+    }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
     private fun hex(s: String): Int = Color.parseColor(s)
@@ -114,7 +125,24 @@ class ChatActivity : Activity() {
     override fun onResume() {
         super.onResume()
         // Kisi aur screen (inbox) se ye friend hat gaya ho to chat khuli nahi rehni chahiye
-        if (!Friends.has(this, peer)) finish()
+        if (!Friends.has(this, peer)) { finish(); return }
+        refreshStatus()
+        statusHandler.post(statusTick)
+    }
+
+    override fun onPause() {
+        statusHandler.removeCallbacks(statusTick)
+        super.onPause()
+    }
+
+    /** Header ka dot + "Online / Offline • 12 min ago" taaza karo. */
+    private fun refreshStatus() {
+        if (!::statusText.isInitialized) return
+        val online = Presence.isOnline(this, peer)
+        statusText.text = Presence.label(this, peer)
+        statusDotWrap.removeAllViews()
+        statusDotWrap.addView(presenceDot(this, online, 8, 12),
+            FrameLayout.LayoutParams(dp(12), dp(12), Gravity.CENTER))
     }
 
     // ============================ SCREEN ============================
@@ -215,12 +243,23 @@ class ChatActivity : Activity() {
             setTextColor(Color.WHITE)
             setSingleLine(true)
         })
-        title.addView(TextView(this).apply {
-            text = "Online"
+        // Online / Offline: website .dm-bar .dot4 (8dp gola) + label ("Offline • 12 min ago")
+        val subRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        statusDotWrap = FrameLayout(this)
+        subRow.addView(statusDotWrap, lp(dp(12), dp(12)))
+        statusText = TextView(this).apply {
             textSize = 10f
             setTextColor(hex("#cfc6ee"))
             setSingleLine(true)
+        }
+        subRow.addView(statusText, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            leftMargin = dp(3)
         })
+        title.addView(subRow)
+        refreshStatus()
         bar.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             leftMargin = dp(9)
         })

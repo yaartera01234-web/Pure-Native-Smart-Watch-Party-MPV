@@ -7,8 +7,11 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
 import android.view.View
 import android.view.animation.LinearInterpolator
+import android.widget.FrameLayout
 
 /** Composer ke icons — website ke SVG se utare gaye: "photo" aur "mic". */
 class WpIcon(ctx: Context, private val kind: String) : View(ctx) {
@@ -171,4 +174,37 @@ class TypingDots(ctx: Context) : View(ctx) {
     /** Bubble ke andar isko jitni jagah chahiye (3 dot + 2 gap, bounce ke liye height). */
     fun desiredWidth(): Int = (31 * resources.displayMetrics.density).toInt()
     fun desiredHeight(): Int = (11 * resources.displayMetrics.density).toInt()
+}
+
+/**
+ * Website wala presence dot (.dm-bar .dot4 aur .dm-row .av3 i):
+ *   online  -> #34d399 + halki si glow (0 0 8px rgba(52,211,153,.8))
+ *   offline -> #6b7280 (bina glow)
+ * Chat header mein 8dp, inbox ke avatar par 13dp (2dp #100a1e border ke saath).
+ */
+fun presenceDot(ctx: Context, online: Boolean, dotDp: Int = 8, glowDp: Int = 12, borderDp: Int = 0): View {
+    val d = ctx.resources.displayMetrics.density
+    val dot = (dotDp * d).toInt()
+    val glow = (glowDp * d).toInt()
+    val wrap = FrameLayout(ctx).apply { layoutParams = FrameLayout.LayoutParams(glow, glow) }
+
+    if (online) {
+        wrap.addView(View(ctx).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                gradientType = GradientDrawable.RADIAL_GRADIENT
+                setColors(intArrayOf(Color.argb(190, 52, 211, 153), Color.argb(0, 52, 211, 153)))
+                gradientRadius = glow / 2f
+            }
+        }, FrameLayout.LayoutParams(glow, glow, Gravity.CENTER))
+    }
+
+    wrap.addView(View(ctx).apply {
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.parseColor(if (online) "#34d399" else "#6b7280"))
+            if (borderDp > 0) setStroke((borderDp * d).toInt(), Color.parseColor("#100a1e"))
+        }
+    }, FrameLayout.LayoutParams(dot, dot, Gravity.CENTER))
+    return wrap
 }

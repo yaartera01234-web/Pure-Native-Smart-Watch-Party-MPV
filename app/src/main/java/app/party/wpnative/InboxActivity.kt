@@ -180,13 +180,15 @@ class InboxActivity : Activity() {
             setTextColor(Color.WHITE)
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(f.color) }
         }, FrameLayout.LayoutParams(dp(48), dp(48)))
-        avatar.addView(View(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(if (f.online) hex("#22c55e") else hex("#6b7280"))
-                setStroke(dp(2), hex("#0f0b20"))
+        // Online/Offline ki nishani: website .dm-row .av3 i (13dp gola, 2dp border)
+        avatar.clipChildren = false
+        row.clipChildren = false
+        avatar.addView(
+            presenceDot(this, Presence.isOnline(this, f.name), 13, 17, 2),
+            FrameLayout.LayoutParams(dp(17), dp(17), Gravity.END or Gravity.BOTTOM).apply {
+                setMargins(0, 0, -dp(2), -dp(2))
             }
-        }, FrameLayout.LayoutParams(dp(12), dp(12), Gravity.END or Gravity.BOTTOM))
+        )
         row.addView(avatar, lp(dp(48), dp(48)))
 
         // Naam + last message pill
