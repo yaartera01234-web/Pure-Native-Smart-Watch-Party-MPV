@@ -115,9 +115,6 @@ class ChatActivity : Activity() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(buildHeader(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        buildReplyBar()
-        col.addView(replyWrap, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
         threadBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             // website #dm-thread: justify-content: flex-end -> kam messages neeche se chipke
@@ -129,6 +126,10 @@ class ChatActivity : Activity() {
             addView(threadBox)
         }
         col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // Reply patti: website ke #dm-rep4 ki tarah — composer ke theek upar
+        buildReplyBar()
+        col.addView(replyWrap, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         // ➕ wali emoji patti: composer ke THEEK upar (website: bottom 122px)
         buildEmojiBar()
@@ -675,7 +676,7 @@ class ChatActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             visibility = View.GONE
-            setPadding(dp(11), dp(7), dp(11), dp(7))
+            setPadding(dp(10), dp(7), dp(10), dp(7))          // website: padding 7px 10px
             background = roundBox(Color.argb(23, 255, 255, 255), Color.argb(36, 255, 255, 255), 12, 1)
         }
         val txt = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -686,8 +687,8 @@ class ChatActivity : Activity() {
             setSingleLine(true)
         }
         replyWhat = TextView(this).apply {
-            textSize = 11.5f
-            setTextColor(hex("#cfd6ff"))
+            textSize = 12f                                  // website: 12px
+            setTextColor(hex("#d1d5db"))                    // website: #d1d5db
             setSingleLine(true)
         }
         txt.addView(replyWho)
@@ -698,14 +699,17 @@ class ChatActivity : Activity() {
             textSize = 12f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            background = roundBox(Color.argb(20, 255, 255, 255), Color.argb(46, 255, 255, 255), 9, 1)
+            background = GradientDrawable().apply {          // website: 26x26, radius 50%, border 0
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(31, 255, 255, 255))
+            }
             setOnClickListener { clearReply() }
-        }, lp(dp(26), dp(26)))
+        }, lp(dp(26), dp(26)).apply { leftMargin = dp(9) })
 
         // replyWrap = padding wali jagah; chhupane/dikhane ka kaam isi pe hota hai
         replyWrap = FrameLayout(this).apply {
             visibility = View.GONE
-            setPadding(dp(11), dp(6), dp(11), dp(0))
+            setPadding(dp(11), dp(6), dp(11), dp(6))
             addView(replyBar)
         }
     }
