@@ -43,7 +43,6 @@ class InboxActivity : Activity() {
     )
 
     private lateinit var listBox: LinearLayout
-    private lateinit var myNameText: TextView
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
     private fun hex(s: String): Int = Color.parseColor(s)
@@ -125,12 +124,6 @@ class InboxActivity : Activity() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(Color.WHITE)
         })
-        myNameText = TextView(this).apply {
-            text = "Tum: ${WpUser.me(this@InboxActivity)}"
-            textSize = 10f
-            setTextColor(hex("#a291c6"))
-        }
-        titleCol.addView(myNameText)
         bar.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         val addBtn = squareBtn("👤+", gradient = true)

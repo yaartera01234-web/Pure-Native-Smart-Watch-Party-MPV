@@ -85,6 +85,7 @@ class BgMsgService : Service() {
                     if (prev == 0L) return@listenLast          // pehli dafa: purane messages chhodo
                     if (m.from == me) return@listenLast        // apna hi bheja hua
                     WpNotify.post(this, p, m.text, chatId)
+                    WpTest.onIncoming(this, p, m.text, chatId)   // TEST: 30s baad 4 sample msg
                 }
                 if (r != null) regs[chatId] = r
             } catch (t: Throwable) { }
