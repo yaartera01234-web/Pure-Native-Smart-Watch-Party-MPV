@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView
 interface ChatHost {
     fun ctx(): android.content.Context
     fun peerName(): String
+    fun meName(): String
     fun peerColorInt(): Int
     fun dp(v: Int): Int
     fun hex(s: String): Int
@@ -121,7 +122,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         private val handle: TextView
         private val chips: LinearLayout
         private val timeTv: TextView
-        private val av: TextView
+        private val av: View
 
         private var bound: Msg? = null
         private var chipSig = ""
@@ -241,15 +242,14 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 gravity = side
             })
 
-            // ---- avatar ----
-            av = TextView(host.ctx()).apply {
-                text = if (mine) "Y" else host.peerName().first().uppercase()
-                textSize = 13f
-                gravity = Gravity.CENTER
-                setTypeface(typeface, Typeface.BOLD)
-                setTextColor(Color.WHITE)
-                background = if (mine) mineAvBg else peerAvBg
-            }
+            // ---- avatar: asli DP (image aane tak pehla harf) ----
+            av = DpStore.circle(
+                host.ctx(),
+                if (mine) host.meName() else host.peerName(),
+                if (mine) host.hex("#a855f7") else host.peerColorInt(),
+                34,
+                isMe = mine
+            )
 
             if (mine) {
                 row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -274,16 +274,6 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
 
         private val peerBg: GradientDrawable get() =
             host.roundBox(Color.argb(23, 255, 255, 255), Color.argb(36, 255, 255, 255), 22, 1)
-
-        private val mineAvBg: GradientDrawable get() = GradientDrawable(
-            GradientDrawable.Orientation.TL_BR,
-            intArrayOf(host.hex("#ff5ebc"), host.hex("#a855f7"))
-        ).apply { shape = GradientDrawable.OVAL }
-
-        private val peerAvBg: GradientDrawable get() = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(host.peerColorInt())
-        }
 
         fun bind(m: Msg, animate: Boolean = false) {
             bound = m

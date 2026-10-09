@@ -225,14 +225,6 @@ class MainActivity : Activity() {
             ))
         }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5); bottomMargin = dp(12) })
 
-        // Tagline
-        card.addView(TextView(this).apply {
-            text = "Doston ke sath YouTube & MP4 dekho + live chatting karo!"
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setTextColor(hex("#c4b5fd"))
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) })
-
         // Avatar + buttons
         card.addView(buildAvatarPick(), lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
 
@@ -358,7 +350,7 @@ class MainActivity : Activity() {
             }
         }
         val letterView = TextView(this).apply {
-            textSize = 30f
+            textSize = 42f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
         }
@@ -389,7 +381,7 @@ class MainActivity : Activity() {
             )
         }
         frame.addView(ringView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        col.addView(frame, lp(dp(58), dp(58)))
+        col.addView(frame, lp(dp(84), dp(84)))
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(smallButton("📷 Photo", "#10b981", "#14b8a6") { openPhotoPicker() },

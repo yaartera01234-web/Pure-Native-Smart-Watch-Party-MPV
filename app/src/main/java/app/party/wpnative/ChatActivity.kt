@@ -989,6 +989,7 @@ class ChatActivity : Activity(), ChatHost {
 
     override fun ctx(): Context = this
     override fun peerName(): String = peer
+    override fun meName(): String = me
     override fun peerColorInt(): Int = peerColor
     override fun tick(m: Msg): CharSequence = timeWithTick(m)
     override fun bubbleMaxWidth(): Int =

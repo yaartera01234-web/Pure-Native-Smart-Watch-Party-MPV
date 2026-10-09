@@ -130,15 +130,8 @@ class CallsActivity : Activity() {
 
         row.setOnLongClickListener { showItemMenu(row, c); true }
 
-        // Avatar (letter, demo)
-        row.addView(TextView(this).apply {
-            text = c.name.take(1).uppercase()
-            textSize = 18f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(c.color) }
-        }, lp(dp(48), dp(48)))
+        // Avatar: asli DP (image aaane tak pehla harf)
+        row.addView(DpStore.circle(this, c.name, c.color, 48), lp(dp(48), dp(48)))
 
         // Naam + direction
         val info = LinearLayout(this).apply {
