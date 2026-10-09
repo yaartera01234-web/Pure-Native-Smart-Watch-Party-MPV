@@ -80,12 +80,14 @@ class BgMsgService : Service() {
             if (regs.containsKey(chatId)) continue
             try {
                 val r = FirebaseChat.listenLast(this, chatId) { m ->
-                    val prev = lastTs[chatId] ?: 0L
-                    if (m.ts > prev) lastTs[chatId] = m.ts
-                    if (prev == 0L) return@listenLast          // pehli dafa: purane messages chhodo
+                    val prev = lastTs[chatId]
+                    lastTs[chatId] = Math.max(prev ?: 0L, m.ts)
+                    /* pehli snapshot sirf "baseline" hai — uspe notification nahi
+                       (warna app kholte hi purane messages ki notification aa jayegi) */
+                    if (prev == null) return@listenLast
+                    if (m.ts <= prev) return@listenLast        // purana / duplicate
                     if (m.from == me) return@listenLast        // apna hi bheja hua
                     WpNotify.post(this, p, m.text, chatId)
-                    WpTest.onIncoming(this, p, m.text, chatId)   // TEST: 30s baad 4 sample msg
                 }
                 if (r != null) regs[chatId] = r
             } catch (t: Throwable) { }

@@ -7,45 +7,57 @@ import android.os.Looper
 /**
  * ⚠️⚠️ SIRF TESTING KE LIYE — test khatam hote hi ye file delete ho jayegi ⚠️⚠️
  *
- * Kaam: jab koi message aaye (aur app background mein ho), to **30 second baad**
- * usi ko **4 sample messages** wapas bhejta hai. Is se aap akele hi
- * background-notification ka poora chakkar test kar sakte ho:
+ * Doosra phone chahiye hi nahi: **"Dost 1" khud-ba-khud message bhejta hai**.
+ * Ye messages asli Firestore mein likhe jate hain (jaise doosre phone se aaye hon),
+ * is liye poora raasta test hota hai:
  *
- *   Phone A se msg bhejo -> Phone B ko background mein mila? -> 30s baad
- *   Phone B se 4 sample msg -> Phone A par 4 notification? ✅
+ *      Firestore -> BgMsgService ka listener -> notification -> (Reply) -> wapas Firestore
  *
- * Loop na chale is liye "Test msg" se shuru hone wale message ka jawab nahi bhejta.
+ * Kaise chalu hota hai: Inbox khulte hi 30 second ka timer lagta hai.
+ * App background kar do -> 30 second baad "Dost 1" se 4 messages (3 second ke farq se).
  */
 object WpTest {
 
     /** TEST ke baad isko false kar dena (ya file hi delete). */
     const val ENABLED = true
 
-    private const val MARK = "Test msg"
-    private const val DELAY_MS = 30_000L          // 30 second
-    private const val GAP_MS = 3_000L             // 4 msg ke darmiyan 3 second
-    private val done = HashSet<String>()
+    private const val DELAY_MS = 30_000L       // 30 second baad shuru
+    private const val GAP_MS = 3_000L          // 4 msg ke darmiyan 3 second
+    private const val COUNT = 4
 
-    fun onIncoming(ctx: Context, from: String, text: String, chatId: String) {
+    private val handler = Handler(Looper.getMainLooper())
+    private val pending = ArrayList<Runnable>()
+
+    /** Inbox aate hi timer lagao (dobara aane par purana timer cancel). */
+    fun armFakeIncoming(ctx: Context) {
         if (!ENABLED) return
-        if (text.startsWith(MARK)) return          // apna hi test msg -> jawab nahi
-        if (WpActive.peer == from) return          // yahi chat khuli hai
-        val key = "$chatId|${text.hashCode()}"
-        synchronized(done) { if (!done.add(key)) return }
-
+        cancel()
         val me = WpUser.me(ctx)
-        Handler(Looper.getMainLooper()).postDelayed({
-            for (i in 1..4) {
-                Handler(Looper.getMainLooper()).postDelayed({
+        val peer = Friends.all(ctx).firstOrNull { it != me } ?: return
+        val chatId = WpUser.chatId(me, peer)
+
+        val start = Runnable {
+            for (i in 1..COUNT) {
+                val one = Runnable {
                     try {
+                        /* from = Dost 1  ->  jaise doosre phone ne bheja ho */
                         FirebaseChat.send(
                             ctx, chatId,
-                            ChatMsg(from = me, text = "$MARK $i",
+                            ChatMsg(from = peer, text = "Test msg $i",
                                 ts = System.currentTimeMillis(), type = "text")
                         )
                     } catch (t: Throwable) { }
-                }, (i - 1) * GAP_MS)
+                }
+                pending.add(one)
+                handler.postDelayed(one, (i - 1) * GAP_MS)
             }
-        }, DELAY_MS)
+        }
+        pending.add(start)
+        handler.postDelayed(start, DELAY_MS)
+    }
+
+    fun cancel() {
+        for (r in pending) handler.removeCallbacks(r)
+        pending.clear()
     }
 }
