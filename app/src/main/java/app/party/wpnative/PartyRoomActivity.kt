@@ -1,8 +1,11 @@
 package app.party.wpnative
 
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
@@ -12,20 +15,32 @@ import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.Editable
+import android.text.InputFilter
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.view.animation.LinearInterpolator
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import java.lang.ref.WeakReference
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -58,7 +73,7 @@ object PartyRoomRoute {
  * Rave jitna full-width 16:9 kala box uski final jagah reserve karta hai. MPV,
  * controls, playback aur sync last player batch mein isi box ke andar aayenge.
  */
-class PartyRoomActivity : Activity() {
+class PartyRoomActivity : Activity(), ChatHost {
 
     /** party-final1.html ke exact page/panel/header/input rang — sirf generic pale tint nahi. */
     private data class Palette(
@@ -71,6 +86,10 @@ class PartyRoomActivity : Activity() {
         val panel: IntArray,
         val head: IntArray,
         val input: IntArray
+    )
+
+    private data class BubblePalette(
+        val own: IntArray, val other: IntArray, val ownText: Int, val otherText: Int
     )
 
     private val prefs by lazy { getSharedPreferences("wp_native", Context.MODE_PRIVATE) }
@@ -102,13 +121,49 @@ class PartyRoomActivity : Activity() {
                 cols("#ed362b10", "#ed343111"), cols("#ff3c3015", "#ff403c13"))
         )
     }
+    private val bubblePalettes by lazy {
+        listOf(
+            BubblePalette(cols("#cf30bd", "#6b55e4"), cols("#261c40", "#1d2340", "#12253b"), Color.WHITE, hex("#efe8fb")),
+            BubblePalette(cols("#f472b6", "#a78bfa"), cols("#51c9c2", "#7182e9", "#aa7ced"), Color.WHITE, Color.WHITE),
+            BubblePalette(cols("#fb923c", "#ea580c"), cols("#38bdf8", "#3b82f6", "#1d4ed8"), hex("#3a1a04"), Color.WHITE),
+            BubblePalette(cols("#22c55e", "#15803d"), cols("#f472b6", "#e11d48", "#be123c"), hex("#02240f"), Color.WHITE),
+            BubblePalette(cols("#facc15", "#eab308"), cols("#a78bfa", "#7c3aed", "#5b21b6"), hex("#3a2d02"), Color.WHITE),
+            BubblePalette(cols("#ef4444", "#b91c1c"), cols("#2dd4bf", "#14b8a6", "#0f766e"), Color.WHITE, hex("#04201d")),
+            BubblePalette(cols("#a3e635", "#65a30d"), cols("#c084fc", "#8b5cf6", "#6d28d9"), hex("#1a2e02"), Color.WHITE),
+            BubblePalette(cols("#0b1220", "#1f2937"), cols("#ffffff", "#e2e8f0", "#cbd5e1"), Color.WHITE, hex("#0b1220")),
+            BubblePalette(cols("#3078cf", "#55b0e4"), cols("#1c3340", "#1c3340", "#123b38"), hex("#031724"), hex("#e8f4fb")),
+            BubblePalette(cols("#30cfa5", "#55e49d"), cols("#1c402e", "#1c402e", "#12383b"), hex("#041b12"), hex("#e8fbf2")),
+            BubblePalette(cols("#ce3758", "#ae275d"), cols("#401c29", "#401c29", "#3b2412"), Color.WHITE, hex("#fbe8ef")),
+            BubblePalette(cols("#e6b25b", "#d1bc78"), cols("#40351c", "#40351c", "#3b3812"), hex("#291b07"), hex("#fbf5e8"))
+        )
+    }
+    private val partyBubble: BubblePalette
+        get() = bubblePalettes[prefs.getInt("bubble", 1).coerceIn(bubblePalettes.indices)]
+
     private var themeIndex = 1
     private var appliedThemeIndex = -1
     private lateinit var roomBackdrop: PartyRoomBackdrop
     private val palette: Palette get() = palettes[themeIndex]
 
+    // Party chat filhaal isi live Room ki local UI state hai; network transport baad mein judega.
+    private val partyMsgs = mutableListOf<Msg>()
+    private var nextPartyMsgId = 1
+    private var partyReplyTo: Msg? = null
+    private var partyEmojiTarget: Msg? = null
+    private lateinit var partyRv: RecyclerView
+    private lateinit var partyLm: LinearLayoutManager
+    private lateinit var partyAdapter: ChatAdapter
+    private lateinit var partyInput: EditText
+    private lateinit var partyReplyWrap: FrameLayout
+    private lateinit var partyReplyWho: TextView
+    private lateinit var partyReplyWhat: TextView
+    private lateinit var partyEmojiWrap: FrameLayout
+    private lateinit var partyEmojiInput: EditText
+    private lateinit var partyFlyLayer: FrameLayout
+
     private fun dp(v: Float): Int = (v * resources.displayMetrics.density).roundToInt()
-    private fun hex(v: String): Int = Color.parseColor(v)
+    override fun dp(v: Int): Int = (v * resources.displayMetrics.density).roundToInt()
+    override fun hex(v: String): Int = Color.parseColor(v)
     private fun cols(vararg v: String): IntArray = v.map(::hex).toIntArray()
     private fun lp(w: Int, h: Int) = LinearLayout.LayoutParams(w, h)
 
@@ -189,6 +244,10 @@ class PartyRoomActivity : Activity() {
         })
 
         root.addView(col, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // Reactions DM ki tarah poore Room ke upar udti hain, touches neeche pass hote hain.
+        partyFlyLayer = FrameLayout(this).apply { isClickable = false; isFocusable = false }
+        root.addView(partyFlyLayer, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         return root
     }
@@ -487,18 +546,50 @@ class PartyRoomActivity : Activity() {
         members.addView(chip, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(25f)).apply { topMargin = dp(3f) })
         chat.addView(members, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(59f)))
 
-        // Live room conversation will occupy all free space. No fake/test messages.
-        chat.addView(FrameLayout(this), LinearLayout.LayoutParams(
+        chat.addView(TextView(this).apply {
+            text = "💬 Live Chat"
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(hex("#d4caff"))
+            setPadding(dp(10f), dp(5f), dp(10f), dp(3f))
+        }, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(25f)))
+
+        // DM wala exact recyclable bubble engine: swipe reply, long-press react, chips.
+        partyLm = LinearLayoutManager(this).apply { stackFromEnd = true }
+        partyAdapter = ChatAdapter(this)
+        partyRv = RecyclerView(this).apply {
+            layoutManager = partyLm
+            adapter = partyAdapter
+            setPadding(dp(8), dp(3), dp(8), dp(2))
+            clipToPadding = false
+            clipChildren = false
+            itemAnimator = null
+        }
+        chat.addView(partyRv, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        chat.addView(buildComposer(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        buildPartyReplyBar()
+        chat.addView(partyReplyWrap,
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        buildPartyEmojiBar()
+        chat.addView(partyEmojiWrap,
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        chat.addView(buildComposer(),
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        renderPartyThread()
+        partyReplyTo?.let { showPartyReply(it, openKeyboard = false) }
         return chat
     }
 
+    /**
+     * Original room composer: emoji row typing box ke upar. GIF jaan-boojh kar hata
+     * diya; photo/mic bilkul DM ke WpIcon + gradient dimensions mein hain.
+     */
     private fun buildComposer(): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(8f), dp(5f), dp(8f), dp(8f))
+            setPadding(dp(8f), dp(4f), dp(8f), dp(8f))
             background = roundBox(Color.argb(61, 5, 6, 18),
                 Color.argb(23, 255, 255, 255), 0f, 1f)
         }
@@ -515,52 +606,444 @@ class PartyRoomActivity : Activity() {
                 text = e
                 textSize = 18f
                 gravity = Gravity.CENTER
-            }, lp(dp(35f), dp(32f)))
+                contentDescription = "Message mein $e lagao"
+                setOnClickListener { appendPartyEmoji(e) }
+            }, lp(dp(35f), dp(36f)))
         }
-        emojis.addView(smallComposerButton("GIF"), lp(dp(42f), dp(32f)).apply { leftMargin = dp(3f) })
-        emojis.addView(smallComposerButton("▧"), lp(dp(38f), dp(32f)).apply { leftMargin = dp(4f) })
-        emojis.addView(smallComposerButton("🎤"), lp(dp(42f), dp(32f)).apply { leftMargin = dp(4f) })
-        sc.addView(emojis, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34f)))
-        box.addView(sc, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(35f)))
+        // GIF nahi: baad mein keyboard/Gboard se direct send setup hoga.
+        emojis.addView(partyMediaIcon("photo", intArrayOf(
+            hex("#f59e0b"), hex("#ec4899"), hex("#8b5cf6"))),
+            lp(dp(36f), dp(36f)).apply { leftMargin = dp(4f) })
+        emojis.addView(partyMediaIcon("mic", intArrayOf(
+            hex("#06b6d4"), hex("#3b82f6"), hex("#8b5cf6"))),
+            lp(dp(36f), dp(36f)).apply { leftMargin = dp(5f) })
+        sc.addView(emojis, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38f)))
+        box.addView(sc, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(39f)))
 
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        inputRow.addView(EditText(this).apply {
+        partyInput = EditText(this).apply {
             hint = "Message likho..."
-            setHintTextColor(hex("#88869b"))
+            setHintTextColor(Color.argb(140, 255, 255, 255))
             setTextColor(Color.WHITE)
             textSize = 13f
-            maxLines = 1
+            gravity = Gravity.CENTER_VERTICAL
+            includeFontPadding = true
             setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            imeOptions = EditorInfo.IME_ACTION_SEND
+            filters = arrayOf(InputFilter.LengthFilter(500))
             setPadding(dp(13f), 0, dp(13f), 0)
             background = themedInput(23f)
-        }, LinearLayout.LayoutParams(0, dp(43f), 1f))
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_SEND) {
+                    sendPartyMessage(); true
+                } else false
+            }
+        }
+        inputRow.addView(partyInput, LinearLayout.LayoutParams(0, dp(43f), 1f))
         inputRow.addView(TextView(this).apply {
             text = "➤"
             textSize = 17f
             gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(Color.WHITE)
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR, palette.accent).apply {
                 shape = GradientDrawable.OVAL
             }
+            setOnClickListener { sendPartyMessage() }
         }, lp(dp(43f), dp(43f)).apply { leftMargin = dp(7f) })
         box.addView(inputRow, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(43f)).apply { topMargin = dp(4f) })
         return box
     }
 
-    private fun smallComposerButton(label: String): TextView = TextView(this).apply {
+    /** DM ka exact 36dp rounded-square SVG icon; media sending network batch mein judegi. */
+    private fun partyMediaIcon(kind: String, colors: IntArray): FrameLayout = FrameLayout(this).apply {
+        contentDescription = if (kind == "photo") "Photo" else "Voice message"
+        background = GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply {
+            cornerRadius = dp(12f).toFloat()
+        }
+        addView(WpIcon(this@PartyRoomActivity, kind),
+            FrameLayout.LayoutParams(dp(18f), dp(18f), Gravity.CENTER))
+    }
+
+    private fun appendPartyEmoji(emoji: String) {
+        partyInput.append(emoji)
+        partyInput.requestFocus()
+        partyInput.setSelection(partyInput.text.length)
+        partyInput.post {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.showSoftInput(partyInput, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    private fun sendPartyMessage() {
+        val text = partyInput.text.toString().trim()
+        if (text.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val m = Msg(
+            id = nextPartyMsgId++, text = text, own = true,
+            time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(now)),
+            day = "", read = true, ts = now
+        )
+        partyReplyTo?.let {
+            m.replyName = if (it.own) "You" else peerName()
+            m.replyText = partyMessageLabel(it)
+            clearPartyReply()
+        }
+        partyMsgs.add(m)
+        // Same standing rule: phone/RAM mein 120 se zyada nahi. Network trim transport ke sath judega.
+        while (partyMsgs.size > FirebaseChat.MSG_KEEP) partyMsgs.removeAt(0)
+        partyInput.setText("")
+        partyAdapter.entryAnimId = m.id
+        renderPartyThread()
+        scrollPartyBottom()
+    }
+
+    private fun renderPartyThread() {
+        if (!::partyAdapter.isInitialized) return
+        val rows = partyMsgs.map { m ->
+            Row(Row.MSG, "party:${m.id}", partySig(m), m, null)
+        }
+        partyAdapter.submit(rows)
+    }
+
+    private fun partySig(m: Msg): String =
+        m.text + "|" + m.replyName + "|" + m.replyText + "|" + m.time + "|" +
+            m.rx.entries.joinToString(",") { "${it.key}:${it.value}" }
+
+    private fun scrollPartyBottom() {
+        partyRv.post {
+            if (partyAdapter.itemCount > 0) partyRv.scrollToPosition(partyAdapter.itemCount - 1)
+        }
+    }
+
+    private fun buildPartyReplyBar() {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = roundBox(Color.argb(23, 255, 255, 255),
+                Color.argb(36, 255, 255, 255), 12, 1)
+        }
+        val line = View(this).apply { setBackgroundColor(hex("#d8b4fe")) }
+        bar.addView(line, lp(dp(2), ViewGroup.LayoutParams.MATCH_PARENT))
+        val replyTextCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        partyReplyWho = TextView(this).apply {
+            textSize = 11f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(hex("#d8b4fe"))
+            setSingleLine(true)
+        }
+        partyReplyWhat = TextView(this).apply {
+            textSize = 11.5f
+            setTextColor(Color.argb(190, 255, 255, 255))
+            setSingleLine(true)
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        replyTextCol.addView(partyReplyWho)
+        replyTextCol.addView(partyReplyWhat)
+        bar.addView(replyTextCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            leftMargin = dp(8)
+        })
+        bar.addView(TextView(this).apply {
+            text = "✕"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setOnClickListener { clearPartyReply() }
+        }, lp(dp(40), dp(36)))
+        partyReplyWrap = FrameLayout(this).apply {
+            visibility = View.GONE
+            setPadding(dp(8), dp(4), dp(8), 0)
+            addView(bar)
+        }
+    }
+
+    private fun showPartyReply(m: Msg, openKeyboard: Boolean = true) {
+        partyReplyTo = m
+        partyReplyWho.text = "Replying to " + if (m.own) "You" else peerName()
+        partyReplyWhat.text = partyMessageLabel(m)
+        partyReplyWrap.visibility = View.VISIBLE
+        if (openKeyboard) {
+            partyInput.requestFocus()
+            partyInput.setSelection(partyInput.text.length)
+            partyInput.post {
+                (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                    ?.showSoftInput(partyInput, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+    }
+
+    private fun clearPartyReply() {
+        partyReplyTo = null
+        if (::partyReplyWrap.isInitialized) partyReplyWrap.visibility = View.GONE
+    }
+
+    private fun partyMessageLabel(m: Msg): String = when (m.type) {
+        "photo" -> "🖼️ Photo"
+        "voice" -> "🎙️ Voice note"
+        else -> m.text
+    }
+
+    /** DM wala ➕ custom-reaction keyboard. */
+    private fun buildPartyEmojiBar() {
+        partyEmojiInput = EditText(this).apply {
+            hint = "Keyboard se apni marzi ka emoji chuno..."
+            setHintTextColor(Color.argb(140, 255, 255, 255))
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER_VERTICAL
+            setSingleLine(true)
+            filters = arrayOf(InputFilter.LengthFilter(8))
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundBox(Color.argb(20, 255, 255, 255),
+                Color.argb(46, 255, 255, 255), 10, 1)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    val emoji = firstPartyEmoji(s?.toString().orEmpty())
+                    if (emoji.isEmpty()) return
+                    val target = partyEmojiTarget
+                    closePartyEmojiBox()
+                    if (target != null) togglePartyReaction(target, emoji)
+                }
+            })
+        }
+        partyEmojiWrap = FrameLayout(this).apply {
+            visibility = View.GONE
+            setPadding(dp(8), dp(4), dp(8), 0)
+            addView(LinearLayout(this@PartyRoomActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(8), dp(7), dp(8), dp(7))
+                background = roundBox(Color.argb(250, 13, 10, 32),
+                    Color.argb(41, 255, 255, 255), 14, 1)
+                addView(partyEmojiInput, LinearLayout.LayoutParams(0, dp(43), 1f))
+                addView(TextView(this@PartyRoomActivity).apply {
+                    text = "✕"
+                    textSize = 15f
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.WHITE)
+                    background = roundBox(Color.argb(31, 255, 255, 255),
+                        Color.TRANSPARENT, 10, 0)
+                    setOnClickListener { closePartyEmojiBox() }
+                }, lp(dp(42), dp(42)).apply { leftMargin = dp(8) })
+            })
+        }
+    }
+
+    private fun openPartyEmojiBox(m: Msg) {
+        partyEmojiTarget = m
+        partyEmojiWrap.visibility = View.VISIBLE
+        partyEmojiInput.setText("")
+        partyEmojiInput.requestFocus()
+        partyEmojiInput.post {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.showSoftInput(partyEmojiInput, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    private fun closePartyEmojiBox() {
+        partyEmojiTarget = null
+        if (::partyEmojiWrap.isInitialized) partyEmojiWrap.visibility = View.GONE
+        if (::partyEmojiInput.isInitialized) {
+            partyEmojiInput.setText("")
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.hideSoftInputFromWindow(partyEmojiInput.windowToken, 0)
+        }
+    }
+
+    private fun firstPartyEmoji(value: String): String {
+        var i = 0
+        while (i < value.length) {
+            val cp = value.codePointAt(i)
+            val emoji = cp in 0x1F000..0x1FAFF || cp in 0x2600..0x27BF ||
+                cp in 0x2190..0x21FF || cp in 0x2B00..0x2BFF || cp == 0x2764
+            if (emoji) {
+                var j = i + Character.charCount(cp)
+                while (j < value.length) {
+                    val next = value.codePointAt(j)
+                    if (next == 0xFE0F || next == 0x200D || next in 0x1F3FB..0x1F3FF ||
+                        next in 0x1F000..0x1FAFF) j += Character.charCount(next) else break
+                }
+                return value.substring(i, j)
+            }
+            i += Character.charCount(cp)
+        }
+        return ""
+    }
+
+    /** Bubble long-press: exact DM quick reactions + custom emoji + reply/copy/delete. */
+    private fun showPartyMessageActions(m: Msg) {
+        val dialog = android.app.Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val radius = dp(22).toFloat()
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(16))
+            background = GradientDrawable().apply {
+                setColor(hex("#1b1433"))
+                cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
+            }
+        }
+        val quick = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf("❤️", "😂", "😮", "😢", "👍", "🔥").forEach { emoji ->
+            quick.addView(TextView(this).apply {
+                text = emoji
+                textSize = 20f
+                gravity = Gravity.CENTER
+                includeFontPadding = true
+                setOnClickListener { togglePartyReaction(m, emoji); dialog.dismiss() }
+            }, lp(dp(36), dp(36)).apply { rightMargin = dp(2) })
+        }
+        quick.addView(TextView(this).apply {
+            text = "➕"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = dp(16).toFloat()
+                setStroke(dp(1), Color.argb(140, 255, 255, 255), dp(3).toFloat(), dp(3).toFloat())
+            }
+            setOnClickListener {
+                dialog.dismiss()
+                window.decorView.postDelayed({ openPartyEmojiBox(m) }, 150L)
+            }
+        }, lp(dp(36), dp(36)))
+        sheet.addView(quick, lp(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(10)
+        })
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        actions.addView(partyActionButton("↩ Reply") {
+            dialog.dismiss(); showPartyReply(m)
+        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            rightMargin = dp(5)
+        })
+        actions.addView(partyActionButton("📋 Copy") {
+            dialog.dismiss()
+            (getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+                ?.setPrimaryClip(ClipData.newPlainText("message", m.text))
+        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            rightMargin = dp(5)
+        })
+        actions.addView(partyActionButton("🗑 Delete") {
+            dialog.dismiss()
+            confirmThen(this@PartyRoomActivity, "Message delete karein?",
+                "Ye message Party chat se hat jayega.") {
+                partyMsgs.removeAll { it.id == m.id }
+                if (partyReplyTo?.id == m.id) clearPartyReply()
+                renderPartyThread()
+            }
+        })
+        sheet.addView(actions, lp(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL })
+
+        dialog.setContentView(sheet)
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM)
+        }
+    }
+
+    private fun partyActionButton(label: String, action: () -> Unit): TextView = TextView(this).apply {
         text = label
-        textSize = if (label == "GIF") 11f else 16f
+        textSize = 12f
         gravity = Gravity.CENTER
         setTypeface(typeface, android.graphics.Typeface.BOLD)
         setTextColor(Color.WHITE)
-        background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
-            intArrayOf(palette.accent[0], palette.accent[1], palette.accent[2])).apply {
-            cornerRadius = dp(10f).toFloat()
+        setPadding(dp(12), dp(9), dp(12), dp(9))
+        background = roundBox(Color.argb(23, 255, 255, 255), Color.TRANSPARENT, 9, 0)
+        setOnClickListener { action() }
+    }
+
+    private fun togglePartyReaction(m: Msg, emoji: String) {
+        val adding = m.rx[emoji] != true
+        if (adding) m.rx[emoji] = true else m.rx.remove(emoji)
+        renderPartyThread()
+        if (adding) flyPartyReaction(emoji)
+    }
+
+    /** DM ka Instagram-style 3-second flying reaction. */
+    private fun flyPartyReaction(emoji: String) {
+        if (!::partyFlyLayer.isInitialized) return
+        val view = TextView(this).apply {
+            text = emoji
+            textSize = 30f
+            alpha = 0f
+        }
+        partyFlyLayer.addView(view, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(96) })
+        val height = if (partyFlyLayer.height > 0) partyFlyLayer.height else dp(420)
+        val rise = (height * (.5f + Math.random().toFloat() * .3f)).coerceAtLeast(dp(180).toFloat())
+        val drift = (if (Math.random() < .5) -1 else 1) * dp(18 + (Math.random() * 34).toInt())
+        val spin = (if (Math.random() < .5) -1 else 1) * (8f + Math.random().toFloat() * 16f)
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 3000L
+            interpolator = LinearInterpolator()
+            addUpdateListener { animator ->
+                val t = animator.animatedFraction
+                view.translationY = -rise * t
+                view.translationX = (drift * Math.sin(t.toDouble() * Math.PI * 1.6)).toFloat()
+                view.rotation = spin * t
+                val pop = min(1f, t * 7f)
+                view.scaleX = .5f + .9f * pop
+                view.scaleY = view.scaleX
+                view.alpha = when {
+                    t < .07f -> t / .07f
+                    t > .62f -> (1f - (t - .62f) / .38f).coerceIn(0f, 1f)
+                    else -> 1f
+                }
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    partyFlyLayer.removeView(view)
+                }
+            })
+            start()
         }
     }
+
+    // ChatAdapter ke liye Party Room host. Bubble gestures/design DM ke exact engine se.
+    override fun ctx(): Context = this
+    override fun peerName(): String = "Party"
+    override fun meName(): String = WpUser.me(this)
+    override fun peerColorInt(): Int = palette.accent[2]
+    override fun mineBubbleBg(): GradientDrawable = GradientDrawable(
+        GradientDrawable.Orientation.TL_BR, partyBubble.own.copyOf()).apply {
+        cornerRadius = dp(22).toFloat()
+    }
+    override fun peerBubbleBg(): GradientDrawable = GradientDrawable(
+        GradientDrawable.Orientation.TL_BR, partyBubble.other.copyOf()).apply {
+        cornerRadius = dp(22).toFloat()
+        setStroke(dp(1), Color.argb(66, 255, 255, 255))
+    }
+    override fun mineBubbleText(): Int = partyBubble.ownText
+    override fun peerBubbleText(): Int = partyBubble.otherText
+    override fun tick(m: Msg): CharSequence {
+        val value = if (m.own) "${m.time} ✓✓" else m.time
+        return android.text.SpannableString(value).apply {
+            setSpan(android.text.style.ForegroundColorSpan(Color.argb(155, 255, 255, 255)),
+                0, value.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+    override fun bubbleMaxWidth(): Int =
+        maxOf(dp(120), (resources.displayMetrics.widthPixels * .85f).toInt() - dp(70))
+    override fun onSwipeReply(m: Msg) = showPartyReply(m)
+    override fun onBubbleLongPress(m: Msg) = showPartyMessageActions(m)
+    override fun onChipClick(m: Msg, emoji: String) = togglePartyReaction(m, emoji)
 
     private fun playerLater() {
         Toast.makeText(this, "Player aur sync last step mein", Toast.LENGTH_SHORT).show()
@@ -577,6 +1060,9 @@ class PartyRoomActivity : Activity() {
             cornerRadius = dp(radius).toFloat()
             setStroke(dp(1f), Color.argb(38, 255, 255, 255))
         }
+
+    override fun roundBox(fill: Int, stroke: Int, radiusDp: Int, strokeDp: Int): GradientDrawable =
+        roundBox(fill, stroke, radiusDp.toFloat(), strokeDp.toFloat())
 
     private fun roundBox(fill: Int, stroke: Int, radius: Float, strokeDp: Float): GradientDrawable =
         GradientDrawable().apply {

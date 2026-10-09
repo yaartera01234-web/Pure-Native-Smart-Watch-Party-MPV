@@ -26,6 +26,15 @@ interface ChatHost {
     fun dp(v: Int): Int
     fun hex(s: String): Int
     fun roundBox(fill: Int, stroke: Int, radiusDp: Int, strokeDp: Int): GradientDrawable
+    /** DM defaults; Party Room apni selected website bubble palette override karti hai. */
+    fun mineBubbleBg(): GradientDrawable = GradientDrawable(
+        GradientDrawable.Orientation.TL_BR,
+        intArrayOf(hex("#5b21b6"), hex("#9333ea"), hex("#db2777"))
+    ).apply { cornerRadius = dp(22).toFloat() }
+    fun peerBubbleBg(): GradientDrawable =
+        roundBox(Color.argb(23, 255, 255, 255), Color.argb(36, 255, 255, 255), 22, 1)
+    fun mineBubbleText(): Int = Color.WHITE
+    fun peerBubbleText(): Int = hex("#f3efff")
     fun tick(m: Msg): CharSequence
     fun bubbleMaxWidth(): Int
     fun onSwipeReply(m: Msg)
@@ -180,7 +189,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             bubble = LinearLayout(host.ctx()).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(14), dp(10), dp(14), dp(10))
-                background = if (mine) mineBg else peerBg
+                background = if (mine) host.mineBubbleBg() else host.peerBubbleBg()
                 if (mine) elevation = dp(6).toFloat()
             }
             quote = LinearLayout(host.ctx()).apply {
@@ -282,7 +291,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
 
             textTv = TextView(host.ctx()).apply {
                 textSize = 14f
-                setTextColor(if (mine) Color.WHITE else host.hex("#f3efff"))
+                setTextColor(if (mine) host.mineBubbleText() else host.peerBubbleText())
                 includeFontPadding = true
                 setLineSpacing(0f, 1.55f)
                 maxWidth = host.bubbleMaxWidth()
@@ -358,14 +367,6 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             bubble.setOnLongClickListener { bound?.let { host.onBubbleLongPress(it) }; true }
             attachSwipe()
         }
-
-        private val mineBg: GradientDrawable get() = GradientDrawable(
-            GradientDrawable.Orientation.TL_BR,
-            intArrayOf(host.hex("#5b21b6"), host.hex("#9333ea"), host.hex("#db2777"))
-        ).apply { cornerRadius = host.dp(22).toFloat() }
-
-        private val peerBg: GradientDrawable get() =
-            host.roundBox(Color.argb(23, 255, 255, 255), Color.argb(36, 255, 255, 255), 22, 1)
 
         fun bind(m: Msg, animate: Boolean = false) {
             bound = m

@@ -8,6 +8,7 @@ Ab shamil hai:
 - Enter Party ke baad native Party Room UI
 - Rave-size full-width `16:9` player placeholder
 - Playlist, party members aur room-chat composer ka native layout
+- Party chat ki local native interactions: quick emoji, message send, swipe reply, reactions aur flying emoji
 
 MPV playback, player controls, synchronization, live party presence/queue aur room-chat networking final player batch mein isi reserved Party Room layout ke andar add honge.
 
