@@ -341,6 +341,40 @@ class ChatActivity : Activity(), ChatHost {
 
     // ============================ THREAD ============================
 
+    /**
+     * List banana ab **sirf farq** update karta hai (RecyclerView + DiffUtil):
+     *   naya message -> 1 nayi line;  ✓✓ neela -> 1 line badli;  delete -> 1 line gayab.
+     * 100 messages hon ya 5,000 — scrolling ek jaisi rahegi.
+     */
+    private fun renderThread() {
+        ad.submit(buildRows())
+    }
+
+    /** messages + din ke sar-name + typing dots -> RecyclerView ki lines. */
+    private fun buildRows(): List<Row> {
+        val out = ArrayList<Row>(msgs.size + 8)
+        if (msgs.isEmpty()) {
+            out.add(Row(Row.EMPTY, "empty", "", null, null))
+            if (typingOn) out.add(Row(Row.TYPING, "typing", "", null, null))
+            return out
+        }
+        var lastDay = ""
+        for (m in msgs) {
+            if (m.day != lastDay) {
+                lastDay = m.day
+                out.add(Row(Row.DAY, "d:$lastDay", lastDay, null, lastDay))
+            }
+            out.add(Row(Row.MSG, "m:${m.id}", sigOf(m), m, null))
+        }
+        if (typingOn) out.add(Row(Row.TYPING, "typing", "", null, null))
+        return out
+    }
+
+    /** Is line ka maal badla hai ya nahi — DiffUtil isi se pakad leta hai. */
+    private fun sigOf(m: Msg): String =
+        m.text + "|" + m.read + "|" + m.replyText + "|" + m.time + "|" +
+            m.rx.entries.joinToString(",") { "${it.key}:${it.value}" }
+
     /** Dots dikhane/chhupane ka switch — asli chat mein server ke signal se chalega. */
     private fun setTyping(on: Boolean) {
         if (typingOn == on) return
