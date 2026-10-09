@@ -570,8 +570,8 @@ class ChatActivity : Activity() {
                 setTypeface(typeface, Typeface.BOLD)
                 setTextColor(Color.WHITE)      // dim dikhne ki wajah: text color set hi nahi tha
                 gravity = Gravity.CENTER
-                minHeight = dp(22)
-                setPadding(dp(9), dp(1), dp(9), dp(1))
+                minHeight = dp(24)
+                setPadding(dp(9), dp(2), dp(9), dp(2))
                 background = GradientDrawable().apply {
                     setColor(if (mine) Color.argb(150, 244, 114, 182) else Color.argb(235, 34, 26, 62))
                     cornerRadius = dp(12).toFloat()
@@ -622,16 +622,17 @@ class ChatActivity : Activity() {
         }
         pill.addView(iconBtn("photo", intArrayOf(hex("#f59e0b"), hex("#ec4899"), hex("#8b5cf6"))) {
             Toast.makeText(this@ChatActivity, "Photo agle step mein", Toast.LENGTH_SHORT).show()
-        }, lp(dp(32), dp(32)).apply { rightMargin = dp(4) })
+        }, lp(dp(34), dp(34)).apply { rightMargin = dp(4) })
         pill.addView(iconBtn("mic", intArrayOf(hex("#06b6d4"), hex("#3b82f6"), hex("#8b5cf6"))) {
             Toast.makeText(this@ChatActivity, "Voice message agle step mein", Toast.LENGTH_SHORT).show()
-        }, lp(dp(32), dp(32)).apply { rightMargin = dp(4) })
+        }, lp(dp(34), dp(34)).apply { rightMargin = dp(4) })
 
         input = EditText(this).apply {
             hint = "Message likho..."
             setHintTextColor(Color.argb(140, 255, 255, 255))
             setTextColor(Color.WHITE)
             textSize = 13f
+            gravity = Gravity.CENTER_VERTICAL      // emoji upar na kate
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             background = null
@@ -640,8 +641,8 @@ class ChatActivity : Activity() {
                 if (actionId == EditorInfo.IME_ACTION_SEND) { send(); true } else false
             }
         }
-        pill.addView(input, LinearLayout.LayoutParams(0, dp(34), 1f).apply { leftMargin = dp(4) })
-        row.addView(pill, LinearLayout.LayoutParams(0, dp(40), 1f))
+        pill.addView(input, LinearLayout.LayoutParams(0, dp(38), 1f).apply { leftMargin = dp(4) })
+        row.addView(pill, LinearLayout.LayoutParams(0, dp(42), 1f))
 
         // ➤ send
         row.addView(TextView(this).apply {
@@ -653,7 +654,7 @@ class ChatActivity : Activity() {
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
                 intArrayOf(hex("#a855f7"), hex("#22d3ee"))).apply { shape = GradientDrawable.OVAL }
             setOnClickListener { send() }
-        }, lp(dp(40), dp(40)).apply { leftMargin = dp(8) })
+        }, lp(dp(42), dp(42)).apply { leftMargin = dp(8) })
 
         bar.addView(row, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return bar
@@ -716,6 +717,7 @@ class ChatActivity : Activity() {
             setHintTextColor(Color.argb(140, 255, 255, 255))
             setTextColor(Color.WHITE)
             textSize = 16f
+            gravity = Gravity.CENTER_VERTICAL
             setSingleLine(true)
             filters = arrayOf(InputFilter.LengthFilter(8))
             imeOptions = EditorInfo.IME_ACTION_DONE
@@ -742,7 +744,7 @@ class ChatActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(8), dp(8), dp(8), dp(8))
                 background = roundBox(Color.argb(250, 13, 10, 32), Color.argb(41, 255, 255, 255), 14, 1)
-                addView(emojiInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(emojiInput, LinearLayout.LayoutParams(0, dp(46), 1f))
                 addView(TextView(this@ChatActivity).apply {
                     text = "✕"
                     textSize = 15f
@@ -750,7 +752,7 @@ class ChatActivity : Activity() {
                     setTextColor(Color.WHITE)
                     background = roundBox(Color.argb(31, 255, 255, 255), Color.TRANSPARENT, 10, 0)
                     setOnClickListener { closeEmojiBox() }
-                }, LinearLayout.LayoutParams(dp(42), dp(38)).apply { leftMargin = dp(8) })
+                }, LinearLayout.LayoutParams(dp(42), dp(42)).apply { leftMargin = dp(8) })
             })
         }
     }
