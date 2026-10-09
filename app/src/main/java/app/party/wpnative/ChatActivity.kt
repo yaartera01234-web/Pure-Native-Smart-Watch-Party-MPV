@@ -10,13 +10,19 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.os.Bundle
+import android.text.Editable
+import android.text.InputFilter
 import android.text.InputType
 import android.text.SpannableString
 import android.text.Spannable
+import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.Window
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
@@ -65,6 +71,7 @@ class ChatActivity : Activity() {
     private var nextId = 1
     private var replyTo: Msg? = null
     private var animId = -1          // jis nay message ko abhi entry animation milti hai
+    private var emojiTarget: Msg? = null   // ➕ se jis message pe emoji lagana hai
 
     private lateinit var threadBox: LinearLayout
     private lateinit var scroll: ScrollView
@@ -73,6 +80,8 @@ class ChatActivity : Activity() {
     private lateinit var replyWrap: FrameLayout
     private lateinit var replyWho: TextView
     private lateinit var replyWhat: TextView
+    private lateinit var emojiWrap: FrameLayout
+    private lateinit var emojiInput: EditText
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
     private fun hex(s: String): Int = Color.parseColor(s)
@@ -99,6 +108,9 @@ class ChatActivity : Activity() {
 
         buildReplyBar()
         col.addView(replyWrap, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        buildEmojiBar()
+        col.addView(emojiWrap, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         threadBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -336,7 +348,61 @@ class ChatActivity : Activity() {
             row.addView(av, lp(dp(34), dp(34)))
             row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
         }
+        bindSwipe(row, m)
         return row
+    }
+
+    /**
+     * Swipe karke reply (website ka d4bind):
+     * dayen swipe -> 12dp par pakad, zyada se zyada 110dp slide,
+     * 60dp se zyada par chhodne par reply set, 200ms mein wapas.
+     */
+    private fun bindSwipe(row: View, m: Msg) {
+        val startAt = dp(12).toFloat()
+        val maxSlide = dp(110).toFloat()
+        val fireAt = dp(60).toFloat()
+        var sx = 0f
+        var sy = 0f
+        var dx = 0f
+        var swiping = false
+
+        row.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    sx = ev.rawX; sy = ev.rawY; dx = 0f; swiping = false
+                    false                       // tap / long-press ko mauka do
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val ddx = ev.rawX - sx
+                    val ddy = ev.rawY - sy
+                    if (Math.abs(ddx) > startAt || Math.abs(ddy) > startAt) v.cancelLongPress()
+                    if (!swiping && ddx > startAt && Math.abs(ddx) > Math.abs(ddy) * 1.5f) {
+                        swiping = true
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                    if (swiping) {
+                        dx = ddx
+                        v.translationX = Math.min(dx, maxSlide)
+                        true
+                    } else false
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (!swiping) {
+                        false
+                    } else {
+                        val fire = dx > fireAt && ev.actionMasked == MotionEvent.ACTION_UP
+                        v.animate().translationX(0f).setDuration(200L)
+                            .setInterpolator(DecelerateInterpolator()).start()
+                        v.parent?.requestDisallowInterceptTouchEvent(false)
+                        swiping = false
+                        dx = 0f
+                        if (fire) setReply(m)
+                        true
+                    }
+                }
+                else -> false
+            }
+        }
     }
 
     /** Bubble ke andar reply ka hissa (website .quote). */
@@ -528,6 +594,93 @@ class ChatActivity : Activity() {
         }
     }
 
+    /** ➕ wali patti: keyboard se emoji chuno (website #dm-rx4box). */
+    private fun buildEmojiBar() {
+        emojiInput = EditText(this).apply {
+            hint = "Keyboard se apni marzi ka emoji chuno..."
+            setHintTextColor(Color.argb(140, 255, 255, 255))
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setSingleLine(true)
+            filters = arrayOf(InputFilter.LengthFilter(8))
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundBox(Color.argb(20, 255, 255, 255), Color.argb(46, 255, 255, 255), 10, 1)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    val em = firstEmoji(s?.toString() ?: "")
+                    if (em.isEmpty()) return
+                    val target = emojiTarget
+                    closeEmojiBox()
+                    if (target != null) toggleRx(target, em)
+                }
+            })
+        }
+
+        emojiWrap = FrameLayout(this).apply {
+            visibility = View.GONE
+            setPadding(dp(10), dp(6), dp(10), dp(0))
+            addView(LinearLayout(this@ChatActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                background = roundBox(Color.argb(250, 13, 10, 32), Color.argb(41, 255, 255, 255), 14, 1)
+                addView(emojiInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(TextView(this@ChatActivity).apply {
+                    text = "✕"
+                    textSize = 15f
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.WHITE)
+                    background = roundBox(Color.argb(31, 255, 255, 255), Color.TRANSPARENT, 10, 0)
+                    setOnClickListener { closeEmojiBox() }
+                }, LinearLayout.LayoutParams(dp(42), dp(38)).apply { leftMargin = dp(8) })
+            })
+        }
+    }
+
+    private fun openEmojiBox(m: Msg) {
+        emojiTarget = m
+        emojiWrap.visibility = View.VISIBLE
+        emojiInput.setText("")
+        emojiInput.requestFocus()
+        emojiInput.post {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.showSoftInput(emojiInput, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    private fun closeEmojiBox() {
+        emojiTarget = null
+        emojiWrap.visibility = View.GONE
+        emojiInput.setText("")
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+            ?.hideSoftInputFromWindow(emojiInput.windowToken, 0)
+    }
+
+    /** Keyboard se aaye hue text mein se pehla emoji nikalta hai (website dmFirstEmoji jaisa). */
+    private fun firstEmoji(s: String): String {
+        var i = 0
+        while (i < s.length) {
+            val cp = s.codePointAt(i)
+            val isEmoji = cp in 0x1F000..0x1FAFF || cp in 0x2600..0x27BF ||
+                cp in 0x2190..0x21FF || cp in 0x2B00..0x2BFF || cp == 0x2764
+            if (isEmoji) {
+                var j = i + Character.charCount(cp)
+                while (j < s.length) {                       // ZWJ / variation selector / skin tone
+                    val c2 = s.codePointAt(j)
+                    if (c2 == 0xFE0F || c2 == 0x200D || c2 in 0x1F3FB..0x1F3FF || c2 in 0x1F000..0x1FAFF) {
+                        j += Character.charCount(c2)
+                    } else break
+                }
+                return s.substring(i, j)
+            }
+            i += Character.charCount(cp)
+        }
+        return ""
+    }
+
     // ============================ KAAM ============================
 
     private fun send() {
@@ -600,6 +753,18 @@ class ChatActivity : Activity() {
                 setOnClickListener { toggleRx(m, e); dlg.dismiss() }
             }, lp(dp(33), dp(33)).apply { marginEnd = dp(2) })
         }
+        // ➕ : keyboard se apni marzi ka emoji (website .rx4more)
+        emoRow.addView(TextView(this).apply {
+            text = "➕"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = dp(16).toFloat()
+                setStroke(dp(1), Color.argb(140, 255, 255, 255), dp(3).toFloat(), dp(3).toFloat())
+            }
+            setOnClickListener { dlg.dismiss(); openEmojiBox(m) }
+        }, lp(dp(33), dp(33)))
         sheet.addView(emoRow, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(10)
         })
