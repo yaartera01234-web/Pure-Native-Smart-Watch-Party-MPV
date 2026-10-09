@@ -1,26 +1,37 @@
 /**
  * Watch Party — PUSH RELAY (Google Apps Script)
  * Free, bina card, wahi Google account jo Firebase wala hai.
- * Private key SIRF aapke Google account mein rahegi — repo (public) mein kabhi nahi.
  *
- * ===== SETUP (2 minute) =====
- * 1) Firebase console -> Project settings -> Service accounts
- *    -> "Generate new private key" -> JSON milega
- * 2) Neeche 3 jagah bharo: PROJECT_ID, CLIENT_EMAIL, PRIVATE_KEY
- *    (JSON se copy karo; PRIVATE_KEY mein \n waise hi rehne do)
- * 3) script.google.com -> New project -> ye code paste karo -> Save
+ * ===== 2 TAREEQE (jo bhi chal jaye) =====
+ *
+ * TAREEQA 1 (sabse aasaan — KOI KEY NAHI):
+ *   Neeche PRIVATE_KEY ko waise hi chhodo (khali). Script apne aap
+ *   ScriptApp.getOAuthToken() use karega — aap hi project ke owner ho, to
+ *   FCM bhejne ka haq hai. Bas appsscript.json mein oauthScopes lagana hai.
+ *
+ * TAREEQA 2 (agar Tareeqa 1 kaam na kare):
+ *   Google Cloud Console se service account ki JSON key banao aur
+ *   CLIENT_EMAIL + PRIVATE_KEY bhar do.
+ *
+ * ===== SETUP =====
+ * 1) script.google.com -> New project
+ * 2) Is file ka poora content paste karo
+ * 3) Project Settings (gear) -> "Show appsscript.json manifest file" ON
+ *    -> appsscript.json mein "oauthScopes" add karo (repo mein file di hai)
  * 4) Deploy -> New deployment -> (gear) Web app
  *      Execute as: Me
- *      Who has access: Anyone        <-- zaroori hai (app bina login call karegi)
- *    -> Deploy -> URL copy karo (/exec wala)
- * 5) Wo URL mujhe bhej do
+ *      Who has access: Anyone        <-- zaroori (app bina login call karegi)
+ *    -> Deploy -> /exec wala URL copy karo
+ * 5) Wo URL Watch Party wale ko bhej do
  */
 
 var PROJECT_ID = 'app-party-wpnative';
-var CLIENT_EMAIL = 'FIREBASE-ADMIN-SDK-ID@app-party-wpnative.iam.gserviceaccount.com';
-var PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\nABCDEFG...\n-----END PRIVATE KEY-----\n";
 
-/* Chhota sa secret (optional) — app aur script dono mein same hona chahiye. */
+/* Tareeqa 2 ke liye (Tareeqa 1 mein khali rehne do) */
+var CLIENT_EMAIL = '';   // firebase-adminsdk-fbsvc@app-party-wpnative.iam.gserviceaccount.com
+var PRIVATE_KEY  = '';   // "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+
+/* Chhota sa secret — app aur script dono mein same hai (Push.kt: RELAY_KEY) */
 var APP_KEY = 'wp-2026';
 
 function doPost(e) {
@@ -59,15 +70,31 @@ function doPost(e) {
       muteHttpExceptions: true
     }
   );
-  return out({ ok: res.getResponseCode() === 200, code: res.getResponseCode(), body: res.getContentText() });
+  return out({
+    ok: res.getResponseCode() === 200,
+    code: res.getResponseCode(),
+    body: res.getContentText()
+  });
 }
 
 function doGet() {
   return out({ ok: true, msg: 'WP push relay chal raha hai' });
 }
 
-/* ---------- Google service account -> access token ---------- */
+/* ---------- access token: service account key warna Apps Script ka token ---------- */
 function getAccessToken() {
+  // Tareeqa 2: service account JSON key di gayi ho
+  if (PRIVATE_KEY && PRIVATE_KEY.indexOf('BEGIN PRIVATE KEY') !== -1 &&
+      CLIENT_EMAIL && CLIENT_EMAIL.indexOf('@') !== -1) {
+    var t = tokenFromJwt();
+    if (t) return t;
+  }
+  // Tareeqa 1: script khud ka OAuth token (aapka Google account = project owner)
+  try { return ScriptApp.getOAuthToken() || null; }
+  catch (err) { return null; }
+}
+
+function tokenFromJwt() {
   var now = Math.floor(Date.now() / 1000);
   var jwt = makeJwt(now);
   var res = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
