@@ -306,8 +306,10 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             }
             timeTv.text = host.tick(m)
 
-            /* recycle hui line kabhi kabhi purani (lambi) chaudai ke sath dikhti thi —
-               ek pal ko bara bubble, phir chhota. Naap-tol dobara karwa dete hain. */
+            /* Recycle hui line ki purani naap (chaudai/unchai) kabhi na tikhe:
+               har bind par text + bubble + poora row dobara naapa jaye. */
+            textTv.requestLayout()
+            bubble.requestLayout()
             row.requestLayout()
         }
 

@@ -38,7 +38,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.firebase.firestore.ListenerRegistration
@@ -197,12 +196,10 @@ class ChatActivity : Activity(), ChatHost {
             clipChildren = false
             clipToPadding = false
             setHasFixedSize(true)
-            itemAnimator = DefaultItemAnimator().apply {
-                addDuration = 180L; moveDuration = 180L; removeDuration = 150L
-                /* ✓✓ neela hone / reaction par cross-fade se bubble "pharak" khaata tha
-                   (purani lambi line ki chaudai ek pal ke liye nazar aati thi) -> band */
-                supportsChangeAnimations = false
-            }
+            /* Animations band: inhi ke dauran recycle hui line ki PURANI chaudai/unchai
+               ek-do frame nazar aa jati thi (ek 'G' ka bubble bara, doosra chhota).
+               Ab har line seedhi apni asli naap mein banti hai. */
+            itemAnimator = null
             // Upar scroll karte hi purane 20 messages (pagination)
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
                 override fun onScrolled(r: RecyclerView, dx: Int, dy: Int) {
