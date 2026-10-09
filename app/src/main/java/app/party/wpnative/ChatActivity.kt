@@ -205,9 +205,9 @@ class ChatActivity : Activity() {
             leftMargin = dp(9)
         })
 
-        // 📞 call
-        bar.addView(circleAction("📞") {
-            Toast.makeText(this, "Call agle step mein", Toast.LENGTH_SHORT).show()
+        // 📞 call (website .dm-call-open wala phone icon)
+        bar.addView(iconAction("phone") {
+            Toast.makeText(this@ChatActivity, "Call agle step mein", Toast.LENGTH_SHORT).show()
         }, lp(dp(36), dp(36)))
 
         // ☰ menu
@@ -218,6 +218,13 @@ class ChatActivity : Activity() {
         wrap.addView(View(this).apply { setBackgroundColor(Color.argb(26, 255, 255, 255)) },
             lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
         return wrap
+    }
+
+    /** Header ka vector-icon wala gol button (call) — website .add2 jaisa. */
+    private fun iconAction(kind: String, fn: (View) -> Unit): FrameLayout = FrameLayout(this).apply {
+        addView(WpIcon(this@ChatActivity, kind), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        background = roundBox(Color.argb(26, 255, 255, 255), Color.argb(36, 255, 255, 255), 11, 1)
+        setOnClickListener { fn(this) }
     }
 
     /** Header ke chhote gol buttons (call / menu) — website .add2 jaisa. */
@@ -544,7 +551,7 @@ class ChatActivity : Activity() {
         background = GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply {
             cornerRadius = dp(12).toFloat()
         }
-        addView(ComposerIcon(this@ChatActivity, kind), FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
+        addView(WpIcon(this@ChatActivity, kind), FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
         setOnClickListener { fn() }
     }
 
@@ -881,7 +888,7 @@ class ChatActivity : Activity() {
 }
 
 /** Composer ke icons — website ke SVG se utare gaye: "photo" aur "mic". */
-private class ComposerIcon(ctx: Context, private val kind: String) : View(ctx) {
+private class WpIcon(ctx: Context, private val kind: String) : View(ctx) {
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -895,6 +902,7 @@ private class ComposerIcon(ctx: Context, private val kind: String) : View(ctx) {
         val s = width / 24f
         c.save()
         c.scale(s, s)
+        p.clearShadowLayer()
         if (kind == "photo") {
             // frame
             p.style = Paint.Style.STROKE
@@ -913,6 +921,31 @@ private class ComposerIcon(ctx: Context, private val kind: String) : View(ctx) {
             path.lineTo(12.8f, 16.6f)
             path.lineTo(15.8f, 13.4f)
             path.lineTo(21f, 18.6f)
+            c.drawPath(path, p)
+        } else if (kind == "phone") {
+            // website #dm-call-btn ka phone SVG (Lucide phone) + purple glow
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2f
+            p.setShadowLayer(3f, 0f, 1f, Color.argb(110, 139, 114, 255))
+            path.reset()
+            path.moveTo(22f, 16.92f)
+            path.lineTo(22f, 19.92f)
+            path.quadTo(21.6f, 21.6f, 19.82f, 21.92f)
+            path.quadTo(15.96f, 21.5f, 11.19f, 18.85f)
+            path.quadTo(7.5f, 16.6f, 5.19f, 12.85f)
+            path.quadTo(2.73f, 8.1f, 2.12f, 4.18f)
+            path.quadTo(2.2f, 2.2f, 4.11f, 2f)
+            path.lineTo(7.11f, 2f)
+            path.quadTo(9.11f, 2f, 9.11f, 3.72f)
+            path.quadTo(8.9f, 5.2f, 9.81f, 6.51f)
+            path.quadTo(8.9f, 7.7f, 9.36f, 8.62f)
+            path.lineTo(8.09f, 9.91f)
+            path.quadTo(10.4f, 12.2f, 14.09f, 15.91f)
+            path.lineTo(15.36f, 14.64f)
+            path.quadTo(16.6f, 13.8f, 17.47f, 14.19f)
+            path.quadTo(18.9f, 14.1f, 20.26f, 14.89f)
+            path.quadTo(21.6f, 14.9f, 22f, 16.92f)
+            path.close()
             c.drawPath(path, p)
         } else {
             // mic ka capsule
