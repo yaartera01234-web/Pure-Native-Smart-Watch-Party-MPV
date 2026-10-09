@@ -32,6 +32,10 @@ object MediaCache {
     private fun file(ctx: Context, key: String): File =
         File(ctx.filesDir, "m_" + key.replace(Regex("[^A-Za-z0-9_.-]"), "_"))
 
+    /** Media ka asli fayl (voice chalane ke liye MediaPlayer ko rasta chahiye). */
+    fun fileOf(ctx: Context, key: String): File? =
+        try { val f = file(ctx, key); if (f.exists()) f else null } catch (t: Throwable) { null }
+
     fun has(ctx: Context, key: String): Boolean =
         try { file(ctx, key).exists() } catch (t: Throwable) { false }
 

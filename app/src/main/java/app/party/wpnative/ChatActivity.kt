@@ -7,12 +7,14 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.Manifest
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
@@ -92,6 +94,14 @@ class ChatActivity : Activity(), ChatHost {
     /** Kitne messages ek baar mein (chat khulte hi) aur upar scroll par. */
     private val PAGE = 20L
     private val REQ_PHOTO = 77       // gallery se photo chunne ka code
+    private val REQ_MIC = 78         // mic ki ijazat mangne ka code
+
+    // ---- voice record ki patti (website #rec-bar) ----
+    private lateinit var composerRow: LinearLayout
+    private lateinit var recBar: LinearLayout
+    private lateinit var recTime: TextView
+    private lateinit var recDot: View
+    private var recPulse: ValueAnimator? = null
 
     private lateinit var rv: RecyclerView
     private lateinit var lm: LinearLayoutManager
@@ -154,6 +164,9 @@ class ChatActivity : Activity(), ChatHost {
     }
 
     override fun onPause() {
+        VoicePlay.stop()               // screen chhodo to awaaz band
+        VoiceRec.abort()               // record chal raha ho to mita do
+        if (::recBar.isInitialized) showRecBar(false)
         WpActive.peer = null
         statusHandler.removeCallbacks(statusTick)
         FirebaseChat.setTyping(this, chatId, me, false)
@@ -465,7 +478,7 @@ class ChatActivity : Activity(), ChatHost {
             openPhotoPicker()
         }, lp(dp(36), dp(36)).apply { rightMargin = dp(4) })
         pill.addView(iconBtn("mic", intArrayOf(hex("#06b6d4"), hex("#3b82f6"), hex("#8b5cf6"))) {
-            Toast.makeText(this@ChatActivity, "Voice message agle step mein", Toast.LENGTH_SHORT).show()
+            startVoice()
         }, lp(dp(36), dp(36)).apply { rightMargin = dp(4) })
 
         input = EditText(this).apply {
@@ -506,8 +519,57 @@ class ChatActivity : Activity(), ChatHost {
             setOnClickListener { send() }
         }, lp(dp(46), dp(46)).apply { leftMargin = dp(8) })
 
+        composerRow = row
+        bar.addView(buildRecBar(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         bar.addView(row, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return bar
+    }
+
+    /**
+     * Record hoti waqt wali patti (website #rec-bar):
+     * lal gubbara (dhadakta hua) + "0:00 / 1:00" + ✕ (mitao) + ➤ (bhejo).
+     */
+    private fun buildRecBar(): LinearLayout {
+        recBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            setPadding(dp(10), dp(7), dp(10), dp(7))
+            background = roundBox(Color.argb(31, 255, 255, 255), Color.TRANSPARENT, 11, 0)
+        }
+        recDot = View(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(hex("#ff4d6d")) }
+        }
+        recBar.addView(recDot, lp(dp(9), dp(9)))
+        recTime = TextView(this).apply {
+            text = "0:00 / 1:00"
+            textSize = 12f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        }
+        recBar.addView(recTime, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            leftMargin = dp(8)
+        })
+        recBar.addView(TextView(this).apply {
+            text = "\u2715"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            background = roundBox(Color.argb(41, 255, 255, 255), Color.TRANSPARENT, 9, 0)
+            setOnClickListener { stopVoice(false) }          // record mita do
+        }, lp(dp(44), dp(28)).apply { rightMargin = dp(6) })
+        recBar.addView(TextView(this).apply {
+            text = "\u27A4"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(hex("#150c26"))
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                intArrayOf(hex("#ff5ebc"), hex("#8b72ff"))).apply { cornerRadius = dp(9).toFloat() }
+            setOnClickListener { stopVoice(true) }           // bhej do
+        }, lp(dp(44), dp(28)))
+        return recBar
     }
 
     /** Composer ke 32dp gol icon buttons (photo / mic) — website ke SVG jaisa. */
@@ -851,6 +913,89 @@ class ChatActivity : Activity(), ChatHost {
         msgs.add(m)
 
         val cm = ChatMsg(from = me, text = "", ts = now, type = "photo")
+        cm.media = MediaCache.b64(bytes)
+        if (FirebaseChat.send(this, chatId, cm)) {
+            MediaCache.rename(this, key, cm.id)   // ab chaabi = asli id
+            m.fid = cm.id
+            m.mediaKey = cm.id
+        }
+        trimToLimit()
+        saveCache()
+        animId = m.id
+        renderThread()
+        scrollBottom()
+        startLiveListener()
+    }
+
+    // ------------------------------------------------------------ VOICE
+
+    /** 🎤 daba -> ijazat lo (pehli baar) aur record shuru. */
+    private fun startVoice() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
+            return
+        }
+        if (VoiceRec.recording()) { stopVoice(true); return }
+        val ok = VoiceRec.start(this) { msg ->
+            Toast.makeText(this@ChatActivity, msg, Toast.LENGTH_SHORT).show()
+        }
+        if (!ok) return
+        VoiceRec.onSec = { sec -> recTime.text = "${sec / 60}:${String.format("%02d", sec % 60)} / 1:00" }
+        VoiceRec.onLimit = { stopVoice(true) }        // 60 second pooray -> apne aap bhej do
+        showRecBar(true)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_MIC) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startVoice()
+        else Toast.makeText(this, "Mic ki ijazat ke baghair voice nahi bhej sakte", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Record ki patti dikhao/chhupao (likhne wali jagah is waqt chhup jati hai). */
+    private fun showRecBar(on: Boolean) {
+        recBar.visibility = if (on) View.VISIBLE else View.GONE
+        composerRow.visibility = if (on) View.GONE else View.VISIBLE
+        if (on) {
+            recTime.text = "0:00 / 1:00"
+            recPulse?.cancel()
+            recPulse = ValueAnimator.ofFloat(1f, 0.22f, 1f).apply {
+                duration = 1000L
+                repeatCount = ValueAnimator.INFINITE
+                addUpdateListener { recDot.alpha = it.animatedValue as Float }
+                start()
+            }
+        } else {
+            recPulse?.cancel(); recPulse = null
+            recDot.alpha = 1f
+        }
+    }
+
+    /** ✕ (mitao) ya ➤ (bhejo). */
+    private fun stopVoice(send: Boolean) {
+        if (!VoiceRec.recording()) { showRecBar(false); return }
+        VoiceRec.stop(send) { file, dur, wave ->
+            showRecBar(false)
+            if (file == null) {
+                if (send && dur < 1) Toast.makeText(this@ChatActivity,
+                    "Bahut chhoti recording — thoda der 🎤 dabaye rakho", Toast.LENGTH_SHORT).show()
+                return@stop
+            }
+            sendVoice(file.readBytes(), dur, wave)
+        }
+    }
+
+    /** Voice bhejo: pehle apni screen par turant, phir Firestore par. */
+    private fun sendVoice(bytes: ByteArray, dur: Int, wave: String) {
+        val now = System.currentTimeMillis()
+        val key = "L$now"
+        MediaCache.save(this, key, bytes)
+
+        val m = Msg(nextId++, "", true, timeShort(now), dayLabel(now),
+            read = false, ts = now, type = "voice", mediaKey = key, dur = dur, wave = wave)
+        msgs.add(m)
+
+        val cm = ChatMsg(from = me, text = "", ts = now, type = "voice", dur = dur, wave = wave)
         cm.media = MediaCache.b64(bytes)
         if (FirebaseChat.send(this, chatId, cm)) {
             MediaCache.rename(this, key, cm.id)   // ab chaabi = asli id

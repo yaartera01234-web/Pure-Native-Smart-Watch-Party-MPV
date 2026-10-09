@@ -54,6 +54,26 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
     /** Is message ko "naya aaya" wala animation milega (Instagram jaisa) — ek hi baar. */
     var entryAnimId: Int = -1
 
+    /** Abhi screen par maujood message-wali lines (voice ka ▶/second turant badalne ke liye). */
+    private val live = ArrayList<MsgVH>()
+
+    init {
+        // Player ka signal -> sirf wahi line badle jiski awaaz chal rahi hai
+        VoicePlay.onTick = { key, prog, rem -> live.forEach { it.voiceTick(key, prog, rem) } }
+        VoicePlay.onStop = { key -> live.forEach { it.voiceEnd(key) } }
+    }
+
+    override fun onViewRecycled(h: RecyclerView.ViewHolder) {
+        super.onViewRecycled(h)
+        if (h is MsgVH) live.remove(h)
+    }
+
+    /** 65 second -> "1:05" (website ka fmtDur). */
+    private fun fmtDur(sec: Int): String {
+        val v = Math.max(0, sec)
+        return (v / 60).toString() + ":" + String.format("%02d", v % 60)
+    }
+
     private companion object {
         const val T_MINE = 0
         const val T_PEER = 1
@@ -98,6 +118,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             is MsgVH -> rows[pos].msg?.let { m ->
                 val anim = (m.id == entryAnimId)
                 if (anim) entryAnimId = -1
+                if (!live.contains(h)) live.add(h)
                 h.bind(m, anim)
             }
             is DayVH -> h.bind(rows[pos].day ?: "")
@@ -124,6 +145,11 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         private val textTv: TextView
         private val photo: ImageView
         private var photoKey: String? = null
+        private val voiceWrap: LinearLayout
+        private val playBtn: TextView
+        private val waveV: VoiceWave
+        private val durTv: TextView
+        private var voiceKey: String? = null
         private val handle: TextView
         private val chips: LinearLayout
         private val timeTv: TextView
@@ -213,6 +239,50 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 setOnClickListener { openFullPhoto() }
             }
             bubble.addView(photo, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            // ---- voice (website .chat-voice .cv: ▶ + awaaz ki lakiren + second) ----
+            voiceWrap = LinearLayout(host.ctx()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                visibility = View.GONE
+                minimumWidth = host.dp(168)                 // website: .cv min-width 168px
+                setPadding(0, host.dp(2), 0, host.dp(2))    // website: padding 2px 0
+            }
+            playBtn = TextView(host.ctx()).apply {
+                text = "\u25B6"
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                background = if (mine)
+                    GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Color.argb(77, 20, 8, 33))      // website: rgba(20,8,33,.30)
+                    }
+                else
+                    GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                        intArrayOf(host.hex("#22d3ee"), host.hex("#8b5cf6"))).apply {
+                        shape = GradientDrawable.OVAL
+                    }
+                setOnClickListener { toggleVoice() }
+            }
+            voiceWrap.addView(playBtn, LinearLayout.LayoutParams(host.dp(34), host.dp(34)))
+            waveV = VoiceWave(host.ctx(), mine)
+            voiceWrap.addView(waveV, LinearLayout.LayoutParams(host.dp(108), host.dp(26)).apply {
+                leftMargin = host.dp(9)                          // website: gap 9px
+                rightMargin = host.dp(9)
+            })
+            durTv = TextView(host.ctx()).apply {
+                textSize = 11f
+                setTypeface(typeface, Typeface.BOLD)
+                alpha = 0.86f
+                gravity = Gravity.END
+                minWidth = host.dp(30)                           // website: min-width 30px
+                setTextColor(if (mine) host.hex("#2b1030") else Color.WHITE)
+            }
+            voiceWrap.addView(durTv, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            bubble.addView(voiceWrap, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
             textTv = TextView(host.ctx()).apply {
@@ -319,15 +389,29 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             nameTv.text = if (m.own) "You" else host.peerName()
             textTv.text = m.text
 
-            // photo wala message: bubble mein photo, (ho to) caption neeche
-            if (m.type == "photo" && m.mediaKey.isNotBlank()) {
-                photo.visibility = View.VISIBLE
-                textTv.visibility = if (m.text.isBlank()) View.GONE else View.VISIBLE
-                loadPhoto(m)
-            } else {
-                photo.visibility = View.GONE
-                if (photoKey != null) { photo.setImageDrawable(null); photoKey = null }
-                textTv.visibility = View.VISIBLE
+            when {
+                // photo wala message: bubble mein photo, (ho to) caption neeche
+                m.type == "photo" && m.mediaKey.isNotBlank() -> {
+                    photo.visibility = View.VISIBLE
+                    voiceWrap.visibility = View.GONE
+                    textTv.visibility = if (m.text.isBlank()) View.GONE else View.VISIBLE
+                    loadPhoto(m)
+                }
+                // voice wala message: ▶ + awaaz ki lakiren + second
+                m.type == "voice" -> {
+                    photo.visibility = View.GONE
+                    if (photoKey != null) { photo.setImageDrawable(null); photoKey = null }
+                    textTv.visibility = View.GONE
+                    voiceWrap.visibility = View.VISIBLE
+                    if (voiceKey != m.mediaKey) { voiceKey = m.mediaKey; waveV.setWave(m.wave) }
+                    syncVoice(m)
+                }
+                else -> {
+                    photo.visibility = View.GONE
+                    if (photoKey != null) { photo.setImageDrawable(null); photoKey = null }
+                    voiceWrap.visibility = View.GONE
+                    textTv.visibility = View.VISIBLE
+                }
             }
 
             if (m.replyText.isNotBlank()) {
@@ -377,6 +461,37 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                     .setInterpolator(DecelerateInterpolator(1.8f))
                     .start()
             }
+        }
+
+        /** ▶ / ⏸ aur second — abhi kya chal raha hai usi hisaab se. */
+        private fun syncVoice(m: Msg, prog: Float = 0f, rem: Int? = null) {
+            val on = m.mediaKey.isNotBlank() && VoicePlay.playing() == m.mediaKey
+            playBtn.text = if (on) "\u23F8" else "\u25B6"
+            waveV.setProgress(if (on) prog else 0f)
+            durTv.text = fmtDur(if (on && rem != null) rem else m.dur)
+        }
+
+        /** ▶ daba -> awaaz chale (ya ruk jaye). */
+        private fun toggleVoice() {
+            val m = bound ?: return
+            if (m.mediaKey.isBlank()) return
+            if (!MediaCache.has(host.ctx(), m.mediaKey)) return
+            VoicePlay.toggle(host.ctx(), m.mediaKey)
+            syncVoice(m)
+        }
+
+        /** Player ka har 100ms ka signal — sirf apni line badlo. */
+        fun voiceTick(key: String, prog: Float, rem: Int) {
+            val m = bound ?: return
+            if (m.type != "voice" || m.mediaKey != key) return
+            syncVoice(m, prog, rem)
+        }
+
+        /** Awaaz khatam / roki gayi. */
+        fun voiceEnd(key: String) {
+            val m = bound ?: return
+            if (m.type != "voice" || m.mediaKey != key) return
+            syncVoice(m)
         }
 
         /** Phone mein padi photo uthao (background mein) aur bubble mein lagao. */
