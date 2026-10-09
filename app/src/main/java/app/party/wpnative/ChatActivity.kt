@@ -62,7 +62,7 @@ import java.util.Locale
  *  - Neeche composer (.dm-inbar > .ig4pill): photo icon, mic icon, input, ➤ send (40dp gol)
  *    (GIF button hataya gaya — keyboard se direct bhejte hain)
  *
- * Abhi demo data hai (in-memory). Asli E2E chat agle step mein.
+ * Firestore + phone cache wali asli chat; koi test/demo conversation nahi.
  */
 class ChatActivity : Activity(), ChatHost {
 
@@ -147,9 +147,8 @@ class ChatActivity : Activity(), ChatHost {
         val cached = ChatCache.load(this, chatId)
         if (cached.isNotEmpty()) {
             cached.forEach { msgs.add(toMsg(it)) }
-        } else if (!FirebaseChat.isReady(this)) {
-            seedDemo()          // sirf demo mode mein; Firebase ho to khaali chat theek hai
         }
+        // Cache/Firebase dono khaali hon to chat sach mein khaali — koi test messages nahi.
         renderThread()
         scrollBottom()
 
@@ -1300,19 +1299,5 @@ class ChatActivity : Activity(), ChatHost {
             if (strokeDp > 0) setStroke(dp(strokeDp), stroke)
         }
 
-    /** Demo baat-cheet (asli chat agle step mein). */
-    private fun seedDemo() {
-        val now = System.currentTimeMillis()
-        val yest = now - 86_400_000L
-        msgs.add(Msg(nextId++, "Kal ka party kaisa tha?", false,
-            timeShort(yest - 3_600_000L), dayLabel(yest), ts = yest - 3_600_000L))
-        msgs.add(Msg(nextId++, "Bahut maza aaya 🎉", true,
-            timeShort(yest - 3_500_000L), dayLabel(yest), read = true,
-            replyName = peer, replyText = "Kal ka party kaisa tha?", ts = yest - 3_500_000L))
-        msgs.add(Msg(nextId++, "Aaj raat phir chalega?", false,
-            timeShort(now - 600_000L), dayLabel(now),
-            rx = LinkedHashMap<String, Boolean>().apply { put("🔥", false) }, ts = now - 600_000L))
-        msgs.add(Msg(nextId++, "Haan, 9 baje ready rehna", true,
-            timeShort(now - 540_000L), dayLabel(now), read = true, ts = now - 540_000L))
-    }
+
 }

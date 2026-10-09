@@ -8,7 +8,7 @@ import android.content.Context
  * baqi code nahi badlega.
  *
  * Chat id dono taraf same nikalne ka tariqa: dono naam sort kar ke jodo,
- * to "Me" <-> "Dost 1" aur "Dost 1" <-> "Me" dono ka ek hi chat banta hai.
+ * to "Ali" <-> "Sara" aur "Sara" <-> "Ali" dono ka ek hi chat banta hai.
  */
 object WpUser {
 
@@ -35,6 +35,6 @@ object WpUser {
         ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(K_NAME, n).apply()
     }
 
-    /** Dono taraf ek hi id: ["Dost 1","Me"].sorted() -> "Dost 1|Me". */
+    /** Dono taraf ek hi id: ["Ali","Sara"].sorted() -> "Ali|Sara". */
     fun chatId(a: String, b: String): String = listOf(a, b).sorted().joinToString("|")
 }

@@ -7,45 +7,47 @@ import android.content.Context
  * jaisa, bas itna farq ke user ne Offline ke saath waqt bhi mangwaaya hai
  * ("Offline • 12 min ago"), jo website mein nahi tha.
  *
- * Abhi demo values hain (Dost 1 = 12 min pehle, Dost 3 = 1 ghanta, Dost 4 = 1 din).
- * Asli E2E aane par server/broker ke presence signal se `setOnline()` chalega.
+ * State Firebase ke live presence signal se aati hai; koi nakli/test online value nahi.
  */
 object Presence {
 
     private const val PREF = "wp_presence"
-    private const val SEED = "seeded"
+    private const val CLEANED = "demo_presence_cleaned_v1"
     private const val K_ON = "on_"      // + naam  -> Boolean
     private const val K_SEEN = "seen_"  // + naam  -> Long (millis)
+    private val DEMO_NAMES = listOf("Dost 1", "Dost 2", "Dost 3", "Dost 4")
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
-    /** Pehli baar chalane par demo presence (ek hi baar). */
-    private fun seed(ctx: Context) {
+    /** Update par purane test presence keys bhi ek hi baar saaf. */
+    private fun prepare(ctx: Context) {
         val p = prefs(ctx)
-        if (p.getBoolean(SEED, false)) return
-        val now = System.currentTimeMillis()
-        p.edit().putBoolean(SEED, true)
-            .putBoolean(K_ON + "Dost 1", false).putLong(K_SEEN + "Dost 1", now - 12 * 60_000L)
-            .putBoolean(K_ON + "Dost 2", true).putLong(K_SEEN + "Dost 2", now)
-            .putBoolean(K_ON + "Dost 3", false).putLong(K_SEEN + "Dost 3", now - 65 * 60_000L)
-            .putBoolean(K_ON + "Dost 4", false).putLong(K_SEEN + "Dost 4", now - 26 * 60 * 60_000L)
-            .apply()
+        if (p.getBoolean(CLEANED, false)) return
+        val e = p.edit().putBoolean(CLEANED, true).remove("seeded")
+        DEMO_NAMES.forEach { name -> e.remove(K_ON + name).remove(K_SEEN + name) }
+        e.apply()
+    }
+
+    /** Ek dost ki phone wali presence mita do. */
+    fun forget(ctx: Context, name: String) {
+        prepare(ctx)
+        prefs(ctx).edit().remove(K_ON + name).remove(K_SEEN + name).apply()
     }
 
     fun isOnline(ctx: Context, name: String): Boolean {
-        seed(ctx)
+        prepare(ctx)
         return prefs(ctx).getBoolean(K_ON + name, false)
     }
 
     /** Aakhri baar kab online tha (millis). 0 = pata nahi. */
     fun seenAt(ctx: Context, name: String): Long {
-        seed(ctx)
+        prepare(ctx)
         return prefs(ctx).getLong(K_SEEN + name, 0L)
     }
 
     /** Online/Offline badlo — sath mein "last seen" bhi update hota hai. */
     fun setOnline(ctx: Context, name: String, online: Boolean) {
-        seed(ctx)
+        prepare(ctx)
         prefs(ctx).edit()
             .putBoolean(K_ON + name, online)
             .putLong(K_SEEN + name, System.currentTimeMillis())
@@ -54,7 +56,7 @@ object Presence {
 
     /** Firebase ke presence signal se state set karo (online + last seen dono). */
     fun setState(ctx: Context, name: String, online: Boolean, seenAt: Long) {
-        seed(ctx)
+        prepare(ctx)
         prefs(ctx).edit()
             .putBoolean(K_ON + name, online)
             .putLong(K_SEEN + name, if (seenAt > 0L) seenAt else System.currentTimeMillis())

@@ -119,6 +119,16 @@ object DpStore {
         } catch (t: Throwable) { }
     }
 
+    /** Test friend hat gaya -> uski RAM aur phone wali DP cache bhi saaf. */
+    fun forget(ctx: Context, name: String) {
+        val key = keyFor(ctx, name, false)
+        synchronized(lock) {
+            mem.remove(key)
+            missed.remove(key)
+        }
+        try { file(ctx, key).delete() } catch (t: Throwable) { }
+    }
+
     // ------------------------------------------------------------ ready-made gol DP
 
     /**

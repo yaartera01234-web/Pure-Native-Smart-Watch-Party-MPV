@@ -14,7 +14,8 @@ import android.widget.TextView
 import android.widget.Toast
 
 /**
- * Calls page (website #yp-calls ka design). Demo data hai, nav mein Call active.
+ * Calls page (website #yp-calls ka design). Asli calls end wale step mein judengi;
+ * tab tak history saaf — koi test/demo call nahi.
  */
 class CallsActivity : Activity() {
 
@@ -28,14 +29,8 @@ class CallsActivity : Activity() {
         val color: Int
     )
 
-    // Demo data (asli call history baad mein)
-    private val calls = mutableListOf(
-        CallItem("Dost 1", "Incoming · 2:37", "↙", false, "7 Oct", "6:02 PM", Color.parseColor("#f472b6")),
-        CallItem("Dost 2", "Outgoing · 43:32", "↗", false, "7 Oct", "5:59 PM", Color.parseColor("#38bdf8")),
-        CallItem("Dost 3", "Outgoing · 7:34", "↗", false, "7 Oct", "1:09 AM", Color.parseColor("#fb7185")),
-        CallItem("Dost 4", "Call nahi lagi", "↗", true, "6 Oct", "2:36 PM", Color.parseColor("#a78bfa")),
-        CallItem("Dost 3", "Outgoing · 16:28", "↗", false, "6 Oct", "11:01 PM", Color.parseColor("#fb7185")),
-    )
+    /** Test history hata di — asli call feature aane tak khaali. */
+    private val calls = mutableListOf<CallItem>()
 
     private lateinit var listBox: LinearLayout
 

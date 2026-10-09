@@ -19,8 +19,8 @@ import android.widget.TextView
 import android.widget.Toast
 
 /**
- * AGLA PAGE: Messages / Inbox (website-v61 wali #dm-sheet > #dm-view-inbox ka design).
- * Abhi demo data hai. Asli chats, friends aur E2E baad ke steps mein.
+ * Messages / Inbox (website-v61 wali #dm-sheet > #dm-view-inbox ka design).
+ * Sirf user ke khud add kiye hue dost — koi test/demo row nahi.
  */
 class InboxActivity : Activity() {
 
@@ -34,13 +34,8 @@ class InboxActivity : Activity() {
         val pinned: Boolean = false
     )
 
-    // Demo data (asli dost list baad mein)
-    private val chats = mutableListOf(
-        Friend("Dost 1", "Ok", "12:31 AM", false, false, hex("#f472b6")),
-        Friend("Dost 2", "Ok", "Kal", true, true, hex("#38bdf8")),
-        Friend("Dost 3", "Hi", "06/10", false, false, hex("#fb7185")),
-        Friend("Dost 4", "Ok", "06/10", false, false, hex("#a78bfa"))
-    )
+    /** Rows sirf asli add kiye hue doston ke liye; test Dost 1..4 hata diye. */
+    private val chats = mutableListOf<Friend>()
 
     private lateinit var listBox: LinearLayout
 
@@ -227,7 +222,7 @@ class InboxActivity : Activity() {
             setTextColor(Color.WHITE)
             setSingleLine(true)
         })
-        info.addView(TextView(this).apply {
+        if (f.last.isNotBlank()) info.addView(TextView(this).apply {
             text = f.last
             textSize = 12f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -247,7 +242,7 @@ class InboxActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.END
         }
-        meta.addView(TextView(this).apply {
+        if (f.time.isNotBlank()) meta.addView(TextView(this).apply {
             text = f.time
             textSize = 11f
             setTextColor(Color.argb(102, 255, 255, 255))
@@ -373,8 +368,14 @@ class InboxActivity : Activity() {
      * wo is list mein dobara kabhi nahi aayega (chahe chat screen se hataya ho).
      */
     private fun visibleChats(): List<Friend> {
-        val meta = chats.associateBy { it.name }
-        return Friends.all(this).map { n -> meta[n] ?: Friend(n, "Ok", "12:31 AM", false, false, colorFor(n)) }
+        val names = Friends.all(this)
+        // Naya asli dost aaye to uski khaali (fake Ok/time ke baghair) metadata row banao.
+        names.forEach { n ->
+            if (chats.none { it.name == n })
+                chats.add(Friend(n, "", "", false, false, colorFor(n)))
+        }
+        chats.removeAll { it.name !in names }
+        return chats.toList()
     }
 
     private fun colorFor(name: String): Int {

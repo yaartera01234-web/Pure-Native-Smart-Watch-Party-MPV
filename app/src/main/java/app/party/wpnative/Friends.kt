@@ -14,23 +14,48 @@ object Friends {
     private const val PREF = "wp_friends"
     private const val KEY = "names"
     private const val SEEDED = "seeded"
-    private const val SEP = ""   // naam mein kabhi nahi aane wala separator
+    private const val DEMO_CLEANED = "demo_friends_cleaned_v1"
+    private const val SEP = "\u001f"   // naam mein kabhi nahi aane wala separator
+
+    /** Purane test build ke nakli dost — ab production list mein kabhi nahi aayenge. */
+    private val DEMO_NAMES = setOf("Dost 1", "Dost 2", "Dost 3", "Dost 4")
 
     private fun prefs(ctx: Context) =
         ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
-    /** Pehli baar app chalane par demo dost daal dete hain (ek hi baar). */
-    private fun seed(ctx: Context) {
+    /**
+     * Fresh install = khaali friend list.
+     *
+     * Purana APK update ho to us mein save huay Dost 1..4 bhi ek baar khud saaf:
+     * list, phone chat cache, photo/voice cache, DP aur presence — asli add kiye hue
+     * doston ko bilkul nahi chhedta.
+     */
+    private fun prepare(ctx: Context) {
         val p = prefs(ctx)
-        if (p.getBoolean(SEEDED, false)) return
+        if (!p.getBoolean(SEEDED, false)) {
+            p.edit().putBoolean(SEEDED, true).putString(KEY, "").apply()
+        }
+        if (p.getBoolean(DEMO_CLEANED, false)) return
+
+        val raw = p.getString(KEY, "") ?: ""
+        val clean = raw.split(SEP).filter { it.isNotBlank() && it !in DEMO_NAMES }
         p.edit()
-            .putBoolean(SEEDED, true)
-            .putString(KEY, listOf("Dost 1", "Dost 2", "Dost 3", "Dost 4").joinToString(SEP))
+            .putString(KEY, clean.joinToString(SEP))
+            .putBoolean(DEMO_CLEANED, true)
             .apply()
+
+        val me = WpUser.me(ctx)
+        DEMO_NAMES.forEach { name ->
+            val chatId = WpUser.chatId(me, name)
+            ChatCache.clear(ctx, chatId)
+            MediaCleanup.clearChat(ctx, chatId)
+            Presence.forget(ctx, name)
+            DpStore.forget(ctx, name)
+        }
     }
 
     fun all(ctx: Context): MutableList<String> {
-        seed(ctx)
+        prepare(ctx)
         val raw = prefs(ctx).getString(KEY, "") ?: ""
         return raw.split(SEP).filter { it.isNotBlank() }.toMutableList()
     }

@@ -16,9 +16,8 @@ import android.content.Context
  * Kaam **app khulte hi** hota hai (koi server nahi, koi Blaze nahi, koi
  * Cloud Function nahi — sab phone ke andar).
  *
- * Registry = chhoti si list: "chatId|msgId|waqt" — isi se pata chalta hai ke
- * Firestore mein kaunsi media abhi maujood hai. (Koi query nahi, is liye
- * Firestore ke 50,000 reads/day mein se ek bhi kharch nahi hota.)
+ * Registry ek chhoti local list hai: chatId + msgId + waqt. Koi Firestore
+ * query nahi, is liye 50,000 reads/day mein se ek bhi kharch nahi hota.
  */
 object MediaCleanup {
 
@@ -28,6 +27,8 @@ object MediaCleanup {
 
     private const val PREF = "media_idx"
     private const val KEY = "items"
+    /** Chat id ke andar `|` hota hai, is liye registry ka separator ye anokha harf hai. */
+    private const val SEP = "\u001e"
     private const val MAX_ITEMS = 5000         // 3 din ka bohat bada buffer; entry na kho jaye
     private const val PER_RUN = 80             // ek baar mein itni media saaf
 
@@ -35,29 +36,49 @@ object MediaCleanup {
     private const val GAP_MS = 6L * 60L * 60L * 1000L
     private var lastRun = 0L
 
+    private data class Ref(val chatId: String, val msgId: String, val ts: Long)
+
     /** Ye message ke paas asli media hai — 3 din baad isay hatana hai. */
     fun note(ctx: Context, chatId: String, msgId: String, ts: Long) {
         if (chatId.isBlank() || msgId.isBlank() || ts <= 0L) return
         try {
             val items = load(ctx).toMutableList()
-            val line = "$chatId|$msgId|$ts"
-            if (!items.contains(line)) {
-                items.add(line)
+            val exists = items.any { raw ->
+                parse(raw)?.let { it.chatId == chatId && it.msgId == msgId } == true
+            }
+            if (!exists) {
+                items.add(pack(Ref(chatId, msgId, ts)))
                 if (items.size > MAX_ITEMS) items.subList(0, items.size - MAX_ITEMS).clear()
                 save(ctx, items)
             }
         } catch (t: Throwable) { }
     }
 
-    /**
-     * Message 120 ki had se bahar gaya -> uski media aur registry entry bhi abhi hatao.
-     */
+    /** Purani test chat ki saari local photo/voice + registry entries saaf. */
+    fun clearChat(ctx: Context, chatId: String) {
+        if (chatId.isBlank()) return
+        try {
+            val items = load(ctx).toMutableList()
+            val gone = ArrayList<String>()
+            items.removeAll { raw ->
+                val ref = parse(raw) ?: return@removeAll true
+                val remove = ref.chatId == chatId
+                if (remove) gone.add(ref.msgId)
+                remove
+            }
+            gone.forEach { MediaCache.delete(ctx, it) }
+            save(ctx, items)
+        } catch (t: Throwable) { }
+    }
+
+    /** Message 120 ki had se bahar gaya -> media aur registry entry bhi abhi hatao. */
     fun forget(ctx: Context, chatId: String, msgId: String) {
         if (chatId.isBlank() || msgId.isBlank()) return
         try {
-            val prefix = "$chatId|$msgId|"
             val items = load(ctx).toMutableList()
-            if (items.removeAll { it.startsWith(prefix) }) save(ctx, items)
+            if (items.removeAll { raw ->
+                    parse(raw)?.let { it.chatId == chatId && it.msgId == msgId } == true
+                }) save(ctx, items)
             MediaCache.delete(ctx, msgId)
         } catch (t: Throwable) { }
     }
@@ -71,12 +92,9 @@ object MediaCleanup {
             val items = load(ctx).toMutableList()
             val gone = ArrayList<String>()
             items.removeAll { raw ->
-                val p = raw.split("|")
-                val sameChat = p.getOrNull(0) == chatId
-                val id = p.getOrNull(1) ?: ""
-                val ts = p.getOrNull(2)?.toLongOrNull() ?: 0L
-                val remove = sameChat && id !in keep && ts <= preserveAfter
-                if (remove && id.isNotBlank()) gone.add(id)
+                val ref = parse(raw) ?: return@removeAll true
+                val remove = ref.chatId == chatId && ref.msgId !in keep && ref.ts <= preserveAfter
+                if (remove) gone.add(ref.msgId)
                 remove
             }
             gone.forEach { MediaCache.delete(ctx, it) }
@@ -105,31 +123,52 @@ object MediaCleanup {
     private fun step(ctx: Context, items: MutableList<String>, cutoff: Long, i: Int, tried: Int) {
         if (i >= items.size || tried >= PER_RUN) { save(ctx, items); return }
         val raw = items[i]
-        val p = raw.split("|")
-        val ts = p.getOrNull(2)?.toLongOrNull() ?: 0L
-        if (p.size < 3) { items.removeAt(i); step(ctx, items, cutoff, i, tried); return }
-        if (ts >= cutoff) { step(ctx, items, cutoff, i + 1, tried); return }   // abhi 3 din nahi hue
-        FirebaseChat.dropMedia(ctx, p[0], p[1]) { ok ->
+        val ref = parse(raw)
+        if (ref == null) { items.removeAt(i); step(ctx, items, cutoff, i, tried); return }
+        if (ref.ts >= cutoff) { step(ctx, items, cutoff, i + 1, tried); return } // abhi 3 din nahi hue
+        FirebaseChat.dropMedia(ctx, ref.chatId, ref.msgId) { ok ->
             if (ok) {
                 items.remove(raw)
-                MediaCache.delete(ctx, p[1])    // Firestore se gai -> phone se bhi
+                MediaCache.delete(ctx, ref.msgId)    // Firestore se gai -> phone se bhi
             }
             // na mili to agli baar phir koshish (entry rahegi)
             step(ctx, items, cutoff, if (ok) i else i + 1, tried + 1)
         }
     }
 
-    /**
-     * Phone ki woh cached media hat jaye jo **ab kisi kaam ki nahi**:
-     *  - 3 din purani file jiski entry registry mein nahi (yaani ab kahin nahi)
-     *  - adhuri bheji hui (L<waqt>) files bhi isi mein aati hain
-     */
+    /** Phone ki 3 din purani, registry ke baghair padi media bhi saaf. */
     private fun sweepLocal(ctx: Context, items: List<String>) {
         try {
             val live = HashSet<String>()
-            items.forEach { it.split("|").getOrNull(1)?.let { id -> live.add(id) } }
+            items.forEach { raw -> parse(raw)?.let { live.add(it.msgId) } }
             MediaCache.purgeOlderThan(ctx, System.currentTimeMillis() - KEEP_MS, live)
         } catch (t: Throwable) { }
+    }
+
+    private fun pack(ref: Ref): String = "${ref.chatId}$SEP${ref.msgId}$SEP${ref.ts}"
+
+    /**
+     * Naya format SEP use karta hai. Pichhle APK ka `chatId|msgId|ts` format bhi
+     * daayen se padh lete hain, kyun ke chatId khud `naam|naam` hota hai.
+     */
+    private fun parse(raw: String): Ref? {
+        try {
+            if (raw.contains(SEP)) {
+                val p = raw.split(SEP)
+                if (p.size == 3) {
+                    val ts = p[2].toLongOrNull() ?: return null
+                    if (p[0].isNotBlank() && p[1].isNotBlank()) return Ref(p[0], p[1], ts)
+                }
+                return null
+            }
+            // Legacy migration: aakhri do `|` hi msgId aur waqt ko alag karte hain.
+            val last = raw.lastIndexOf('|')
+            if (last <= 0 || last >= raw.lastIndex) return null
+            val prev = raw.lastIndexOf('|', last - 1)
+            if (prev <= 0 || prev >= last - 1) return null
+            val ts = raw.substring(last + 1).toLongOrNull() ?: return null
+            return Ref(raw.substring(0, prev), raw.substring(prev + 1, last), ts)
+        } catch (t: Throwable) { return null }
     }
 
     private fun load(ctx: Context): List<String> {
@@ -138,9 +177,14 @@ object MediaCleanup {
         return raw.split("\n").filter { it.isNotBlank() }
     }
 
+    /** Save karte waqt purana format bhi naya bana jata hai aur duplicate nikal jata hai. */
     private fun save(ctx: Context, items: List<String>) {
+        val unique = LinkedHashMap<String, Ref>()
+        items.forEach { raw ->
+            parse(raw)?.let { ref -> unique[ref.chatId + SEP + ref.msgId] = ref }
+        }
         ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
-            .putString(KEY, items.joinToString("\n"))
+            .putString(KEY, unique.values.joinToString("\n") { pack(it) })
             .apply()
     }
 }
