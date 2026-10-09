@@ -125,6 +125,67 @@ object FirebaseChat {
         } catch (t: Throwable) { null }
     }
 
+    /**
+     * Message mitao — **sabke phone se** (sirf apni screen se nahi).
+     *
+     * Seedha document delete karne se doosre phone ko pata hi nahi chalta
+     * (wo kabhi na kabhi cache se wapas la deta hai). Is liye:
+     *   text khaali + deleted = true  ->  ye "nishan" har device turant dekh leta hai.
+     */
+    fun delete(ctx: Context, chatId: String, id: String) {
+        if (!isReady(ctx) || id.isBlank()) return
+        try {
+            msgs(ctx, chatId).document(id)
+                .set(mapOf("deleted" to true, "text" to ""), SetOptions.merge())
+        } catch (t: Throwable) { }
+    }
+
+    /** Chat clear: saare messages par wahi "mita hua" nishan (batch). */
+    fun deleteAll(ctx: Context, chatId: String, ids: List<String>) {
+        if (!isReady(ctx)) return
+        try {
+            val batch = db(ctx).batch()
+            ids.filter { it.isNotBlank() }.forEach {
+                batch.set(msgs(ctx, chatId).document(it),
+                    mapOf("deleted" to true, "text" to ""), SetOptions.merge())
+            }
+            batch.commit()
+        } catch (t: Throwable) { }
+    }
+
+    fun setPresence(ctx: Context, name: String, online: Boolean) {
+        if (!isReady(ctx)) return
+        try {
+            db(ctx).collection("users").document(name)
+                .set(mapOf("online" to online, "seenAt" to System.currentTimeMillis()), SetOptions.merge())
+        } catch (t: Throwable) { }
+    }
+
+    /** Apna FCM token save karo (doosra phone isi par push bhejega). */
+    fun saveToken(ctx: Context, name: String, token: String) {
+        if (!isReady(ctx)) return
+        try {
+            db(ctx).collection("users").document(name)
+                .set(mapOf("fcmToken" to token), SetOptions.merge())
+        } catch (t: Throwable) { }
+    }
+
+    /** Doosre ka FCM token + online haalat (push bhejne se pehle). */
+    fun getToken(ctx: Context, name: String, cb: (String?, Boolean) -> Unit) {
+        if (!isReady(ctx)) { cb(null, false); return }
+        try {
+            db(ctx).collection("users").document(name).get()
+                .addOnSuccessListener { snap ->
+                    cb(snap.getString("fcmToken"), snap.getBoolean("online") ?: false)
+                }
+                .addOnFailureListener { cb(null, false) }
+        } catch (t: Throwable) { cb(null, false) }
+    }
+
+    /**
+     * Background service ke liye: is chat ka **sabse naya** message, live.
+     * (naye message par turant callback — service ko notification dikhane ke liye)
+     */
     fun listenPresence(ctx: Context, name: String, onState: (Boolean, Long) -> Unit): ListenerRegistration? {
         if (!isReady(ctx)) return null
         return try {
