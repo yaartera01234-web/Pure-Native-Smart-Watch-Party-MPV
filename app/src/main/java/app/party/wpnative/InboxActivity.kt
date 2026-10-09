@@ -52,6 +52,7 @@ class InboxActivity : Activity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         askNotifyPermission()
+        BgMsgService.start(this)      // app band hone pe bhi notification
         setContentView(buildScreen())
     }
 

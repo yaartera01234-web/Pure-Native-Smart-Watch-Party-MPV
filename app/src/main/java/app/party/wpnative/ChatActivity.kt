@@ -1100,7 +1100,6 @@ class ChatActivity : Activity() {
         // Firebase (agar ready ho) — warna sirf local/demo
         val cm = ChatMsg(from = me, text = txt, ts = now, replyName = m.replyName, replyText = m.replyText)
         if (FirebaseChat.send(this, chatId, cm)) m.fid = cm.id
-        Push.notifyPeer(this, peer, me, txt)     // app background mein ho to push jaye
         trimToLimit()
         saveCache()
         animId = m.id

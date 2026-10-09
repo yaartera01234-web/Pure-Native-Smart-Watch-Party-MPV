@@ -155,6 +155,24 @@ object FirebaseChat {
         } catch (t: Throwable) { cb(null, false) }
     }
 
+    /**
+     * Background service ke liye: is chat ka **sabse naya** message, live.
+     * (naye message par turant callback — service ko notification dikhane ke liye)
+     */
+    fun listenLast(ctx: Context, chatId: String, onMsg: (ChatMsg) -> Unit): ListenerRegistration? {
+        if (!isReady(ctx)) return null
+        return try {
+            msgs(ctx, chatId)
+                .orderBy("ts", Query.Direction.DESCENDING)
+                .limit(1)
+                .addSnapshotListener { snap, _ ->
+                    val d = snap?.documents?.firstOrNull() ?: return@addSnapshotListener
+                    val m = d.data?.let { ChatMsg.fromMap(d.id, it) } ?: return@addSnapshotListener
+                    onMsg(m)
+                }
+        } catch (t: Throwable) { null }
+    }
+
     fun listenPresence(ctx: Context, name: String, onState: (Boolean, Long) -> Unit): ListenerRegistration? {
         if (!isReady(ctx)) return null
         return try {

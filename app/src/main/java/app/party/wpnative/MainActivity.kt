@@ -124,6 +124,7 @@ class MainActivity : Activity() {
         applyTheme()
         restoreAvatar()
         saveFcmToken()
+        BgMsgService.start(this)      // app band hone pe bhi notification
     }
 
     /** Android 13+ par notification ki ijazat (push ke liye zaroori). */
