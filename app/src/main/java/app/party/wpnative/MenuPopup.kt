@@ -85,7 +85,7 @@ fun askTextDialog(ctx: Context, title: String, hint: String, current: String, on
     val input = EditText(ctx).apply {
         setText(current)
         setSelection(current.length)
-        hint = hint
+        setHint(hint)
         setHintTextColor(Color.parseColor("#8b7fb0"))
         setTextColor(Color.WHITE)
         textSize = 14f
