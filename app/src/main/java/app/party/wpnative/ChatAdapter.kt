@@ -35,6 +35,9 @@ interface ChatHost {
         roundBox(Color.argb(23, 255, 255, 255), Color.argb(36, 255, 255, 255), 22, 1)
     fun mineBubbleText(): Int = Color.WHITE
     fun peerBubbleText(): Int = hex("#f3efff")
+    fun messageName(m: Msg): String = if (m.own) "You" else m.senderName.ifBlank { peerName() }
+    fun messageColor(m: Msg): Int = if (m.own) hex("#f9a8d4")
+        else m.senderColor.takeIf { it != 0 } ?: peerColorInt()
     fun tick(m: Msg): CharSequence
     fun bubbleMaxWidth(): Int
     fun onSwipeReply(m: Msg)
@@ -156,10 +159,11 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         private val handle: TextView
         private val chips: LinearLayout
         private val timeTv: TextView
-        private val av: View
+        private val avatarSlot: FrameLayout
 
         private var bound: Msg? = null
         private var chipSig = ""
+        private var avatarSig = ""
 
         init {
             val dp = { v: Int -> host.dp(v) }
@@ -343,22 +347,16 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 gravity = side
             })
 
-            // ---- avatar: asli DP (image aane tak pehla harf) ----
-            av = DpStore.circle(
-                host.ctx(),
-                if (mine) host.meName() else host.peerName(),
-                if (mine) host.hex("#a855f7") else host.peerColorInt(),
-                34,
-                isMe = mine
-            )
+            // ---- avatar slot: Party Room mein har message ka sender alag ho sakta hai. ----
+            avatarSlot = FrameLayout(host.ctx())
 
             if (mine) {
                 row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     rightMargin = dp(8)
                 })
-                row.addView(av, LinearLayout.LayoutParams(dp(34), dp(34)))
+                row.addView(avatarSlot, LinearLayout.LayoutParams(dp(34), dp(34)))
             } else {
-                row.addView(av, LinearLayout.LayoutParams(dp(34), dp(34)))
+                row.addView(avatarSlot, LinearLayout.LayoutParams(dp(34), dp(34)))
                 row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     leftMargin = dp(8)
                 })
@@ -382,7 +380,19 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             handle.scaleY = 0.7f
             handle.rotation = 0f
 
-            nameTv.text = if (m.own) "You" else host.peerName()
+            val shownName = host.messageName(m)
+            val shownColor = host.messageColor(m)
+            nameTv.text = shownName
+            nameTv.setTextColor(shownColor)
+            val nextAvatarSig = "$shownName|$shownColor|${m.own}"
+            if (avatarSig != nextAvatarSig) {
+                avatarSig = nextAvatarSig
+                avatarSlot.removeAllViews()
+                avatarSlot.addView(DpStore.circle(host.ctx(),
+                    if (m.own) host.meName() else shownName, shownColor, 34, isMe = m.own),
+                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT))
+            }
             textTv.text = m.text
 
             when {
@@ -419,7 +429,9 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             }
 
             // chips sirf tab banayein jab reactions badle hon (scroll mein bekaar na bane)
-            val sig = m.rx.entries.joinToString(",") { "${it.key}:${it.value}" }
+            val sig = m.rx.entries.joinToString(",") {
+                "${it.key}:${it.value}:${m.rxCounts[it.key] ?: 1}"
+            }
             if (sig != chipSig) {
                 chipSig = sig
                 rebuildChips(m)
@@ -549,7 +561,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             m.rx.forEach { (emoji, byMe) ->
                 val on = byMe
                 chips.addView(TextView(host.ctx()).apply {
-                    text = "$emoji 1"
+                    text = "$emoji ${m.rxCounts[emoji]?.coerceAtLeast(1) ?: 1}"
                     textSize = 12.5f
                     setTypeface(typeface, Typeface.BOLD)
                     setTextColor(Color.WHITE)

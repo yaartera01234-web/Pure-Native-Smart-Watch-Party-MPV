@@ -26,6 +26,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -52,6 +53,15 @@ class PartyLobbyActivity : Activity() {
         window.statusBarColor = Color.BLACK
         window.navigationBarColor = Color.BLACK
         setContentView(buildLobby())
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::status.isInitialized && !getSharedPreferences("wp_native", Context.MODE_PRIVATE)
+                .getBoolean("party_live", false)) {
+            status.text = "Yet Not Joined, Tap On Enter Party"
+            status.setTextColor(hex("#bfc1ed"))
+        }
     }
 
     private fun buildLobby(): View {
@@ -116,9 +126,22 @@ class PartyLobbyActivity : Activity() {
             isClickable = true
             isFocusable = true
             setOnClickListener {
-                // Ab native Party Room khulti hai. MPV/player engine baad ke final
-                // player batch mein uske reserved 16:9 box ke andar lagega.
-                startActivity(Intent(this@PartyLobbyActivity, PartyRoomActivity::class.java))
+                // Party Bar sirf Lobby kholti hai. Asli join isi tap par, first-page
+                // ke saved name + room + selected tower ke mutabiq hota hai.
+                val p = getSharedPreferences("wp_native", Context.MODE_PRIVATE)
+                val name = p.getString("name", "")?.trim().orEmpty()
+                val savedRoom = p.getString("room", "")?.trim().orEmpty()
+                if (name.isBlank() || savedRoom.isBlank()) {
+                    status.text = "First page par Name aur Room save karo"
+                    status.setTextColor(hex("#fda4af"))
+                    Toast.makeText(this@PartyLobbyActivity,
+                        "Pehle first page par Name aur Room likho", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                status.text = "Joining $savedRoom on ${PartyTower.towerLabel(p.getInt("tower", 0))}…"
+                status.setTextColor(hex("#86efac"))
+                startActivity(Intent(this@PartyLobbyActivity, PartyRoomActivity::class.java)
+                    .putExtra("join_from_lobby", true))
                 overridePendingTransition(0, 0)
             }
         }

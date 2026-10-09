@@ -2,12 +2,14 @@ package app.party.wpnative
 
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -17,6 +19,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputFilter
@@ -32,7 +35,9 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -73,7 +78,7 @@ object PartyRoomRoute {
  * Rave jitna full-width 16:9 kala box uski final jagah reserve karta hai. MPV,
  * controls, playback aur sync last player batch mein isi box ke andar aayenge.
  */
-class PartyRoomActivity : Activity(), ChatHost {
+class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     /** party-final1.html ke exact page/panel/header/input rang — sirf generic pale tint nahi. */
     private data class Palette(
@@ -163,6 +168,29 @@ class PartyRoomActivity : Activity(), ChatHost {
     private val keyboardCollapseViews = mutableListOf<View>()
     private var roomKeyboardOpen = false
 
+    // Selected MQTT tower + real Room members/playlist/media UI.
+    private lateinit var partyOnlineText: TextView
+    private lateinit var partyMembersTitle: TextView
+    private lateinit var partyMembersList: LinearLayout
+    private lateinit var sourceRowView: View
+    private lateinit var sourceInput: EditText
+    private lateinit var playlistCount: TextView
+    private lateinit var playlistHint: TextView
+    private lateinit var playlistArrow: TextView
+    private lateinit var playlistListWrap: ScrollView
+    private lateinit var playlistList: LinearLayout
+    private val partyQueue = mutableListOf<PartyQueueItem>()
+    private var partyQueueIndex = -1
+    private var playlistOpen = false
+    private var partyTowerUp = false
+    private var partyMemberCount = 1
+    private lateinit var partyComposerRow: LinearLayout
+    private lateinit var partyRecBar: LinearLayout
+    private lateinit var partyRecTime: TextView
+    private var leavingParty = false
+    private val REQ_PARTY_PHOTO = 177
+    private val REQ_PARTY_MIC = 178
+
     private fun dp(v: Float): Int = (v * resources.displayMetrics.density).roundToInt()
     override fun dp(v: Int): Int = (v * resources.displayMetrics.density).roundToInt()
     override fun hex(v: String): Int = Color.parseColor(v)
@@ -178,6 +206,17 @@ class PartyRoomActivity : Activity(), ChatHost {
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         applyWindowBase()
         setContentView(buildRoom())
+
+        // Party Bar sirf Lobby tak laati hai; actual Tower join isi Activity ko Lobby ke
+        // Enter Party se kholne ke baad hota hai, saved first-page name/room/tower par.
+        val room = prefs.getString("room", "")?.trim().orEmpty()
+        if (room.isBlank()) {
+            Toast.makeText(this, "Pehle first page par Room name save karo", Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
+        MediaCache.deletePrefix(this, "party_")
+        PartyTower.enter(this, room, WpUser.me(this), prefs.getInt("tower", 0), this)
     }
 
     /**
@@ -187,6 +226,7 @@ class PartyRoomActivity : Activity(), ChatHost {
      */
     override fun onResume() {
         super.onResume()
+        PartyTower.attach(this)
         val saved = prefs.getInt("theme", 1).coerceIn(palettes.indices)
         if (saved != appliedThemeIndex) {
             themeIndex = saved
@@ -208,8 +248,38 @@ class PartyRoomActivity : Activity(), ChatHost {
     }
 
     override fun onDestroy() {
+        PartyTower.detach(this)
+        VoiceRec.abort()
         PartyRoomRoute.detach(this)
         super.onDestroy()
+    }
+
+    @Deprecated("Android back callback compatibility")
+    override fun onBackPressed() {
+        if (leavingParty) return
+        AlertDialog.Builder(this)
+            .setTitle("🚪 Party se Left?")
+            .setMessage("Aapki Room chat is phone se foran clear hogi. Baqi members ki chat aur saved playlist rahegi.")
+            .setNegativeButton("Nahi", null)
+            .setPositiveButton("Left") { _, _ -> leavePartyNow() }
+            .show()
+    }
+
+    private fun leavePartyNow() {
+        if (leavingParty) return
+        leavingParty = true
+        VoicePlay.stop()
+        VoiceRec.abort()
+        partyMsgs.forEach { if (it.mediaKey.startsWith("party_")) MediaCache.delete(this, it.mediaKey) }
+        partyMsgs.clear()
+        if (::partyAdapter.isInitialized) renderPartyThread()
+        PartyTower.leave {
+            MediaCache.deletePrefix(this, "party_")
+            if (!isFinishing) {
+                finish()
+                overridePendingTransition(0, 0)
+            }
+        }
     }
 
     private fun applyWindowBase() {
@@ -228,8 +298,8 @@ class PartyRoomActivity : Activity(), ChatHost {
         col.addView(buildHeader(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         // Keyboard khule to fixed player blocks chupte hain, warna composer screen ke neeche kat jata hai.
-        val sourceRow = buildSourceRow().also(keyboardCollapseViews::add)
-        col.addView(sourceRow, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(51f)).apply {
+        sourceRowView = buildSourceRow()
+        col.addView(sourceRowView, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(51f)).apply {
             setMargins(dp(8f), dp(8f), dp(8f), 0)
         })
 
@@ -240,7 +310,7 @@ class PartyRoomActivity : Activity(), ChatHost {
         })
 
         val playlist = buildPlaylist().also(keyboardCollapseViews::add)
-        col.addView(playlist, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(48f)).apply {
+        col.addView(playlist, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(dp(8f), dp(7f), dp(8f), 0)
         })
 
@@ -298,10 +368,13 @@ class PartyRoomActivity : Activity(), ChatHost {
 
     /** Typing mode mein header/chat rehte hain; player/member blocks temporary collapse hote hain. */
     private fun setRoomKeyboardMode(open: Boolean) {
-        if (roomKeyboardOpen == open) return
+        val changed = roomKeyboardOpen != open
         roomKeyboardOpen = open
-        keyboardCollapseViews.forEach { it.visibility = if (open) View.GONE else View.VISIBLE }
-        if (open && ::partyRv.isInitialized) partyRv.post { scrollPartyBottom() }
+        if (changed) keyboardCollapseViews.forEach { it.visibility = if (open) View.GONE else View.VISIBLE }
+        if (::sourceRowView.isInitialized) {
+            sourceRowView.visibility = if (open && ::sourceInput.isInitialized && !sourceInput.hasFocus()) View.GONE else View.VISIBLE
+        }
+        if (changed && open && ::partyRv.isInitialized) partyRv.post { scrollPartyBottom() }
     }
 
     private fun buildHeader(): View {
@@ -330,14 +403,16 @@ class PartyRoomActivity : Activity(), ChatHost {
         })
         bar.addView(brand, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        bar.addView(TextView(this).apply {
-            text = "●  1 online"
-            textSize = 11f
-            setTextColor(hex("#86efac"))
+        partyOnlineText = TextView(this).apply {
+            text = "📻 Tower…"
+            textSize = 10.5f
+            setTextColor(hex("#fcd34d"))
             gravity = Gravity.CENTER
-            setPadding(dp(9f), dp(5f), dp(9f), dp(5f))
+            setPadding(dp(8f), dp(5f), dp(8f), dp(5f))
             background = roundBox(Color.argb(33, 74, 222, 128), Color.argb(32, 255, 255, 255), 20f, 1f)
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        bar.addView(partyOnlineText,
+            lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         val chat = headerButton("💬").apply {
             contentDescription = "Messages"
@@ -353,6 +428,10 @@ class PartyRoomActivity : Activity(), ChatHost {
         bar.addView(headerButton("🎨").apply {
             contentDescription = "Theme"
             setOnClickListener { openThemePicker() }
+        }, lp(dp(34f), dp(34f)).apply { leftMargin = dp(5f) })
+        bar.addView(headerButton("🚪").apply {
+            contentDescription = "Leave Party"
+            setOnClickListener { onBackPressed() }
         }, lp(dp(34f), dp(34f)).apply { leftMargin = dp(5f) })
         return bar
     }
@@ -424,6 +503,7 @@ class PartyRoomActivity : Activity(), ChatHost {
                             dialog?.dismiss()
                             applyWindowBase()
                             setContentView(buildRoom())
+                            PartyTower.attach(this@PartyRoomActivity)
                         }
                     }
                     row.addView(card, LinearLayout.LayoutParams(0,
@@ -469,7 +549,7 @@ class PartyRoomActivity : Activity(), ChatHost {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val input = EditText(this).apply {
+        sourceInput = EditText(this).apply {
             hint = "YouTube / MP4 / MP3 link..."
             setHintTextColor(hex("#88869b"))
             setTextColor(Color.WHITE)
@@ -478,18 +558,21 @@ class PartyRoomActivity : Activity(), ChatHost {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             setPadding(dp(12f), 0, dp(9f), 0)
             background = themedInput(12f)
+            setOnFocusChangeListener { _, _ -> if (roomKeyboardOpen) setRoomKeyboardMode(true) }
         }
-        row.addView(input, LinearLayout.LayoutParams(0, dp(44f), 1f))
+        row.addView(sourceInput, LinearLayout.LayoutParams(0, dp(44f), 1f))
 
-        row.addView(sourceButton("▶ Play", intArrayOf(hex("#1AD07A"), hex("#0ABF6A"))),
-            lp(dp(59f), dp(44f)).apply { leftMargin = dp(6f) })
-        row.addView(sourceButton("＋", intArrayOf(hex("#FF5AA8"), hex("#B46BFF"))),
-            lp(dp(43f), dp(44f)).apply { leftMargin = dp(6f) })
+        row.addView(sourceButton("▶ Play", intArrayOf(hex("#1AD07A"), hex("#0ABF6A"))) {
+            playerLater()
+        }, lp(dp(59f), dp(44f)).apply { leftMargin = dp(6f) })
+        row.addView(sourceButton("＋", intArrayOf(hex("#FF5AA8"), hex("#B46BFF"))) {
+            addSourceToPlaylist()
+        }, lp(dp(43f), dp(44f)).apply { leftMargin = dp(6f) })
         row.addView(searchButton(), lp(dp(43f), dp(44f)).apply { leftMargin = dp(6f) })
         return row
     }
 
-    private fun sourceButton(label: String, colors: IntArray): TextView = TextView(this).apply {
+    private fun sourceButton(label: String, colors: IntArray, action: () -> Unit): TextView = TextView(this).apply {
         text = label
         textSize = if (label.length > 2) 11.5f else 20f
         gravity = Gravity.CENTER
@@ -498,7 +581,7 @@ class PartyRoomActivity : Activity(), ChatHost {
         background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, colors).apply {
             cornerRadius = dp(12f).toFloat()
         }
-        setOnClickListener { playerLater() }
+        setOnClickListener { action() }
     }
 
     private fun searchButton(): View {
@@ -532,32 +615,221 @@ class PartyRoomActivity : Activity(), ChatHost {
     }
 
     private fun buildPlaylist(): View {
-        val row = LinearLayout(this).apply {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = glassBox(15f)
+        }
+        val head = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12f), 0, dp(12f), 0)
-            background = glassBox(15f)
+            setOnClickListener {
+                playlistOpen = !playlistOpen
+                renderPartyPlaylist()
+            }
         }
-        row.addView(TextView(this).apply {
+        playlistCount = TextView(this).apply {
             text = "📋  Playlist (0)"
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(hex("#d4caff"))
-        })
-        row.addView(TextView(this).apply {
-            text = "▼ Tap to expand"
+        }
+        head.addView(playlistCount)
+        playlistHint = TextView(this).apply {
+            text = "Tap to expand"
             textSize = 10f
-            setTextColor(Color.argb(150, 212, 202, 255))
+            setTextColor(Color.argb(205, 212, 202, 255))
             gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            leftMargin = dp(8f)
-        })
-        row.addView(TextView(this).apply {
+        }
+        head.addView(playlistHint, LinearLayout.LayoutParams(0,
+            ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8f) })
+        playlistArrow = TextView(this).apply {
             text = "▼"
-            textSize = 11f
+            textSize = 12f
             setTextColor(hex("#c4b5fd"))
+        }
+        head.addView(playlistArrow)
+        box.addView(head, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(48f)))
+
+        playlistList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(2), dp(8), dp(8))
+        }
+        playlistListWrap = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            visibility = if (playlistOpen) View.VISIBLE else View.GONE
+            addView(playlistList, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        box.addView(playlistListWrap, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(180f)))
+        renderPartyPlaylist()
+        return box
+    }
+
+    private fun addSourceToPlaylist() {
+        val raw = sourceInput.text.toString().trim()
+        if (raw.isBlank()) {
+            Toast.makeText(this, "Pehle link paste karo", Toast.LENGTH_SHORT).show(); return
+        }
+        if (!PartyTower.isConnected()) {
+            Toast.makeText(this, "Tower connect hone do", Toast.LENGTH_SHORT).show(); return
+        }
+        val videoId = youtubeId(raw)
+        val type = when {
+            videoId.isNotBlank() -> "youtube"
+            raw.substringBefore('?').endsWith(".mp3", true) -> "mp3"
+            else -> "mp4"
+        }
+        val item = PartyQueueItem(
+            id = "q" + System.currentTimeMillis().toString(36),
+            type = type,
+            url = if (type == "youtube") "" else raw,
+            videoId = videoId,
+            label = if (videoId.isNotBlank()) "YouTube · $videoId" else raw.substringAfterLast('/').ifBlank { raw },
+            by = WpUser.me(this)
+        )
+        partyQueue.add(item)
+        PartyTower.publishQueue(partyQueue, partyQueueIndex)
+        sourceInput.setText("")
+        playlistOpen = true
+        renderPartyPlaylist()
+        if (videoId.isNotBlank()) PartyPlaylistMedia.title(videoId) { title ->
+            val live = partyQueue.firstOrNull { it.id == item.id } ?: return@title
+            if (live.title.isBlank()) {
+                live.title = title; live.label = title
+                PartyTower.publishQueue(partyQueue, partyQueueIndex)
+                renderPartyPlaylist()
+            }
+        }
+    }
+
+    private fun youtubeId(raw: String): String {
+        return try {
+            val u = Uri.parse(raw)
+            when {
+                u.host?.contains("youtu.be", true) == true -> u.pathSegments.firstOrNull().orEmpty()
+                u.host?.contains("youtube.com", true) == true && u.pathSegments.firstOrNull() == "shorts" ->
+                    u.pathSegments.getOrNull(1).orEmpty()
+                u.host?.contains("youtube.com", true) == true -> u.getQueryParameter("v").orEmpty()
+                else -> ""
+            }.take(20)
+        } catch (_: Throwable) { "" }
+    }
+
+    private fun renderPartyPlaylist() {
+        if (!::playlistList.isInitialized) return
+        playlistCount.text = "📋  Playlist (${partyQueue.size})"
+        playlistHint.text = if (playlistOpen) "Tap to collapse" else "Tap to expand"
+        playlistArrow.text = if (playlistOpen) "▲" else "▼"
+        playlistListWrap.visibility = if (playlistOpen) View.VISIBLE else View.GONE
+        playlistList.removeAllViews()
+        if (partyQueue.isEmpty()) {
+            playlistList.addView(TextView(this).apply {
+                text = "Koi song queue mein nahi — link paste karke ＋ dabao 🎶"
+                textSize = 11f
+                gravity = Gravity.CENTER
+                setTextColor(Color.argb(180, 212, 202, 255))
+                setPadding(dp(8), dp(18), dp(8), dp(18))
+            }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            return
+        }
+        partyQueue.forEachIndexed { index, item ->
+            playlistList.addView(buildPlaylistItem(item, index),
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)))
+        }
+    }
+
+    private fun buildPlaylistItem(item: PartyQueueItem, index: Int): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), dp(5), dp(4), dp(5))
+            background = roundBox(
+                if (index == partyQueueIndex) Color.argb(48, 167, 139, 250) else Color.argb(17, 255, 255, 255),
+                Color.argb(30, 255, 255, 255), 10, 1)
+            setOnClickListener { playerLater() }
+        }
+        if (item.type == "youtube" && item.videoId.isNotBlank()) {
+            val thumb = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                background = roundBox(hex("#1a1a2e"), Color.argb(35, 255, 255, 255), 8, 1)
+                clipToOutline = true
+            }
+            row.addView(thumb, lp(dp(56), dp(36)).apply { rightMargin = dp(7) })
+            PartyPlaylistMedia.thumbnail(this, item.videoId, thumb)
+            if (item.title.isBlank()) PartyPlaylistMedia.title(item.videoId) { title ->
+                val live = partyQueue.firstOrNull { it.id == item.id } ?: return@title
+                if (live.title.isBlank()) {
+                    live.title = title; live.label = title
+                    PartyTower.publishQueue(partyQueue, partyQueueIndex)
+                    renderPartyPlaylist()
+                }
+            }
+        } else {
+            row.addView(TextView(this).apply {
+                text = if (item.type == "mp3") "🎵" else "🎞️"
+                textSize = 19f; gravity = Gravity.CENTER
+                background = roundBox(hex("#1a1a2e"), Color.argb(35, 255, 255, 255), 8, 1)
+            }, lp(dp(56), dp(36)).apply { rightMargin = dp(7) })
+        }
+
+        val names = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        names.addView(TextView(this).apply {
+            text = (if (index == partyQueueIndex) "▶ " else "${index + 1}. ") +
+                item.name.ifBlank { item.originalName() }
+            textSize = 12f; setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE); setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
         })
+        if (item.name.isNotBlank()) names.addView(TextView(this).apply {
+            text = item.originalName(); textSize = 9.5f
+            setTextColor(Color.argb(170, 212, 202, 255)); setSingleLine(true)
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        row.addView(names, LinearLayout.LayoutParams(0,
+            ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(TextView(this).apply {
+            text = "☰"; textSize = 15f; gravity = Gravity.CENTER; setTextColor(hex("#d8b4fe"))
+            contentDescription = "Playlist item rename"
+            setOnClickListener { renamePlaylistItem(item.id) }
+        }, lp(dp(34), dp(38)))
+        row.addView(TextView(this).apply {
+            text = "✕"; textSize = 12f; gravity = Gravity.CENTER; setTextColor(hex("#fda4af"))
+            contentDescription = "Playlist item remove"
+            setOnClickListener { removePlaylistItem(item.id) }
+        }, lp(dp(32), dp(38)))
         return row
+    }
+
+    private fun renamePlaylistItem(id: String) {
+        val item = partyQueue.firstOrNull { it.id == id } ?: return
+        val input = EditText(this).apply {
+            hint = "Naya naam likho…"; setText(item.name); setSingleLine(true)
+            filters = arrayOf(InputFilter.LengthFilter(60)); setSelectAllOnFocus(true)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("✏️ Naam badlo")
+            .setMessage("Asli: ${item.originalName()}")
+            .setView(input)
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Asli naam") { _, _ ->
+                item.name = ""; PartyTower.publishQueue(partyQueue, partyQueueIndex); renderPartyPlaylist()
+            }
+            .setPositiveButton("Save") { _, _ ->
+                item.name = input.text.toString().trim().replace(Regex("\\s+"), " ").take(60)
+                PartyTower.publishQueue(partyQueue, partyQueueIndex); renderPartyPlaylist()
+            }.create()
+        dialog.setOnShowListener { input.requestFocus() }
+        dialog.show()
+    }
+
+    private fun removePlaylistItem(id: String) {
+        val index = partyQueue.indexOfFirst { it.id == id }
+        if (index < 0) return
+        partyQueue.removeAt(index)
+        if (index <= partyQueueIndex) partyQueueIndex--
+        PartyTower.publishQueue(partyQueue, partyQueueIndex)
+        renderPartyPlaylist()
     }
 
     private fun buildPartyChat(): View {
@@ -573,39 +845,27 @@ class PartyRoomActivity : Activity(), ChatHost {
             background = roundBox(Color.argb(5, 255, 255, 255),
                 Color.argb(20, 255, 255, 255), 0f, 0f)
         }
-        members.addView(TextView(this).apply {
+        partyMembersTitle = TextView(this).apply {
             text = "👥 Party Members (1)"
             textSize = 12f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(hex("#d4caff"))
-        })
-        val me = WpUser.me(this)
-        val chip = LinearLayout(this).apply {
+        }
+        members.addView(partyMembersTitle)
+        partyMembersList = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(6f), dp(2f), dp(9f), dp(2f))
-            background = roundBox(Color.argb(19, 255, 255, 255), palette.accent[1], 20f, 1f)
         }
-        chip.addView(DpStore.circle(this, me, palette.accent[1], 20, isMe = true), lp(dp(20f), dp(20f)))
-        chip.addView(TextView(this).apply {
-            text = me
-            textSize = 11f
-            setTextColor(Color.WHITE)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            leftMargin = dp(6f)
-        })
-        members.addView(chip, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(25f)).apply { topMargin = dp(3f) })
+        members.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(partyMembersList, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(25f)))
+        }, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(28f)).apply { topMargin = dp(3f) })
+        renderPartyMembers(emptyList())
         keyboardCollapseViews.add(members)
         chat.addView(members, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(59f)))
 
-        chat.addView(TextView(this).apply {
-            text = "💬 Live Chat"
-            textSize = 12f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(hex("#d4caff"))
-            setPadding(dp(10f), dp(5f), dp(10f), dp(3f))
-        }, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(25f)))
+        // “Live Chat” ki alag 25dp row hata di — ab yahi jagah messages ko milti hai.
 
         // DM wala exact recyclable bubble engine: swipe reply, long-press react, chips.
         partyLm = LinearLayoutManager(this).apply { stackFromEnd = true }
@@ -657,18 +917,24 @@ class PartyRoomActivity : Activity(), ChatHost {
         listOf("😂", "❤️", "🔥", "😭", "👏", "🥳", "👍").forEach { e ->
             emojis.addView(TextView(this).apply {
                 text = e
-                textSize = 18f
+                textSize = 22f
                 gravity = Gravity.CENTER
+                alpha = 1f
+                elevation = dp(2f).toFloat()
+                setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                setShadowLayer(dp(4f).toFloat(), 0f, dp(1f).toFloat(), Color.argb(210, 255, 255, 255))
+                background = roundBox(Color.argb(30, 255, 255, 255),
+                    Color.argb(34, 255, 255, 255), 10f, 1f)
                 contentDescription = "Message mein $e lagao"
                 setOnClickListener { appendPartyEmoji(e) }
-            }, lp(dp(35f), dp(36f)))
+            }, lp(dp(37f), dp(36f)).apply { rightMargin = dp(2f) })
         }
         // GIF nahi: baad mein keyboard/Gboard se direct send setup hoga.
         emojis.addView(partyMediaIcon("photo", intArrayOf(
-            hex("#f59e0b"), hex("#ec4899"), hex("#8b5cf6"))),
+            hex("#f59e0b"), hex("#ec4899"), hex("#8b5cf6"))) { openPartyPhotoPicker() },
             lp(dp(36f), dp(36f)).apply { leftMargin = dp(4f) })
         emojis.addView(partyMediaIcon("mic", intArrayOf(
-            hex("#06b6d4"), hex("#3b82f6"), hex("#8b5cf6"))),
+            hex("#06b6d4"), hex("#3b82f6"), hex("#8b5cf6"))) { startPartyVoice() },
             lp(dp(36f), dp(36f)).apply { leftMargin = dp(5f) })
         sc.addView(emojis, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38f)))
         box.addView(sc, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(39f)))
@@ -690,6 +956,7 @@ class PartyRoomActivity : Activity(), ChatHost {
             filters = arrayOf(InputFilter.LengthFilter(500))
             setPadding(dp(13f), 0, dp(13f), 0)
             background = themedInput(23f)
+            setOnFocusChangeListener { _, _ -> if (roomKeyboardOpen) setRoomKeyboardMode(true) }
             setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_SEND) {
                     sendPartyMessage(); true
@@ -708,18 +975,51 @@ class PartyRoomActivity : Activity(), ChatHost {
             }
             setOnClickListener { sendPartyMessage() }
         }, lp(dp(43f), dp(43f)).apply { leftMargin = dp(7f) })
+        partyComposerRow = inputRow
+        partyRecBar = buildPartyRecBar()
+        box.addView(partyRecBar,
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4f) })
         box.addView(inputRow, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(43f)).apply { topMargin = dp(4f) })
         return box
     }
 
-    /** DM ka exact 36dp rounded-square SVG icon; media sending network batch mein judegi. */
-    private fun partyMediaIcon(kind: String, colors: IntArray): FrameLayout = FrameLayout(this).apply {
+    /** DM ka exact 36dp rounded-square SVG icon; Party mein ab selected tower se kaam karta hai. */
+    private fun partyMediaIcon(kind: String, colors: IntArray, action: () -> Unit): FrameLayout = FrameLayout(this).apply {
         contentDescription = if (kind == "photo") "Photo" else "Voice message"
         background = GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply {
             cornerRadius = dp(12f).toFloat()
         }
         addView(WpIcon(this@PartyRoomActivity, kind),
             FrameLayout.LayoutParams(dp(18f), dp(18f), Gravity.CENTER))
+        setOnClickListener { action() }
+    }
+
+    private fun buildPartyRecBar(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        visibility = View.GONE
+        setPadding(dp(10), dp(6), dp(10), dp(6))
+        background = roundBox(Color.argb(31, 255, 255, 255), Color.TRANSPARENT, 11, 0)
+        addView(View(this@PartyRoomActivity).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(hex("#ff4d6d")) }
+        }, lp(dp(9), dp(9)))
+        partyRecTime = TextView(this@PartyRoomActivity).apply {
+            text = "0:00 / 1:00"; textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD); setTextColor(Color.WHITE)
+        }
+        addView(partyRecTime, LinearLayout.LayoutParams(0,
+            ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
+        addView(TextView(this@PartyRoomActivity).apply {
+            text = "✕"; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
+            background = roundBox(Color.argb(41, 255, 255, 255), Color.TRANSPARENT, 9, 0)
+            setOnClickListener { stopPartyVoice(false) }
+        }, lp(dp(44), dp(28)).apply { rightMargin = dp(6) })
+        addView(TextView(this@PartyRoomActivity).apply {
+            text = "➤"; gravity = Gravity.CENTER; setTextColor(hex("#150c26"))
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                intArrayOf(hex("#ff5ebc"), hex("#8b72ff"))).apply { cornerRadius = dp(9).toFloat() }
+            setOnClickListener { stopPartyVoice(true) }
+        }, lp(dp(44), dp(28)))
     }
 
     private fun appendPartyEmoji(emoji: String) {
@@ -732,27 +1032,108 @@ class PartyRoomActivity : Activity(), ChatHost {
         }
     }
 
+    private fun openPartyPhotoPicker() {
+        try {
+            val i = Intent(Intent.ACTION_GET_CONTENT).apply {
+                type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE)
+            }
+            startActivityForResult(Intent.createChooser(i, "Party photo chuno"), REQ_PARTY_PHOTO)
+        } catch (_: Throwable) {
+            Toast.makeText(this, "Gallery nahi khul saki", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @Deprecated("Activity result compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_PARTY_PHOTO || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        Toast.makeText(this, "Photo tower ke liye taiyar ho rahi hai…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val bytes = MediaCache.compress(this, uri, 300 * 1024)
+            runOnUiThread {
+                if (bytes == null) Toast.makeText(this, "Photo 300KB ke andar compress nahi hui", Toast.LENGTH_SHORT).show()
+                else sendPartyMedia("photo", bytes, 0, "")
+            }
+        }.start()
+    }
+
+    private fun startPartyVoice() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_PARTY_MIC); return
+        }
+        if (VoiceRec.recording()) { stopPartyVoice(true); return }
+        val ok = VoiceRec.start(this) { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
+        if (!ok) return
+        VoiceRec.onSec = { sec ->
+            if (::partyRecTime.isInitialized) partyRecTime.text =
+                "${sec / 60}:${String.format("%02d", sec % 60)} / 1:00"
+        }
+        VoiceRec.onLimit = { stopPartyVoice(true) }
+        showPartyRecBar(true)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_PARTY_MIC) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startPartyVoice()
+        else Toast.makeText(this, "Mic ki ijazat ke baghair voice nahi bhej sakte", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showPartyRecBar(show: Boolean) {
+        if (!::partyRecBar.isInitialized) return
+        partyRecBar.visibility = if (show) View.VISIBLE else View.GONE
+        partyComposerRow.visibility = if (show) View.GONE else View.VISIBLE
+        if (show) partyRecTime.text = "0:00 / 1:00"
+    }
+
+    private fun stopPartyVoice(send: Boolean) {
+        if (!VoiceRec.recording()) { showPartyRecBar(false); return }
+        VoiceRec.stop(send) { file, dur, wave ->
+            showPartyRecBar(false)
+            if (file == null) {
+                if (send && dur < 1) Toast.makeText(this, "Voice bahut chhoti thi", Toast.LENGTH_SHORT).show()
+                return@stop
+            }
+            val bytes = try { file.readBytes() } catch (_: Throwable) { null }
+            try { file.delete() } catch (_: Throwable) {}
+            if (bytes == null || bytes.size > 480 * 1024) {
+                Toast.makeText(this, "Voice tower limit se bari hai", Toast.LENGTH_SHORT).show()
+            } else sendPartyMedia("voice", bytes, dur, wave)
+        }
+    }
+
+    private fun sendPartyMedia(type: String, bytes: ByteArray, dur: Int, wave: String) {
+        val reply = partyReplyTo
+        val mid = PartyTower.sendMessage(
+            text = "",
+            replyName = reply?.let { if (it.own) "You" else messageName(it) }.orEmpty(),
+            replyText = reply?.let(::partyMessageLabel).orEmpty(),
+            replyMid = reply?.fid.orEmpty(),
+            type = type, media = bytes, dur = dur, wave = wave
+        )
+        if (mid == null) {
+            Toast.makeText(this, "Tower connect nahi — media nahi gayi", Toast.LENGTH_SHORT).show(); return
+        }
+        MediaCache.save(this, "party_$mid", bytes)
+        clearPartyReply()
+    }
+
     private fun sendPartyMessage() {
         val text = partyInput.text.toString().trim()
         if (text.isEmpty()) return
-        val now = System.currentTimeMillis()
-        val m = Msg(
-            id = nextPartyMsgId++, text = text, own = true,
-            time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(now)),
-            day = "", read = true, ts = now
+        val reply = partyReplyTo
+        val mid = PartyTower.sendMessage(
+            text = text,
+            replyName = reply?.let { if (it.own) "You" else messageName(it) }.orEmpty(),
+            replyText = reply?.let(::partyMessageLabel).orEmpty(),
+            replyMid = reply?.fid.orEmpty()
         )
-        partyReplyTo?.let {
-            m.replyName = if (it.own) "You" else peerName()
-            m.replyText = partyMessageLabel(it)
-            clearPartyReply()
+        if (mid == null) {
+            Toast.makeText(this, "Tower connect nahi — message nahi gaya", Toast.LENGTH_SHORT).show(); return
         }
-        partyMsgs.add(m)
-        // Same standing rule: phone/RAM mein 120 se zyada nahi. Network trim transport ke sath judega.
-        while (partyMsgs.size > FirebaseChat.MSG_KEEP) partyMsgs.removeAt(0)
         partyInput.setText("")
-        partyAdapter.entryAnimId = m.id
-        renderPartyThread()
-        scrollPartyBottom()
+        clearPartyReply()
     }
 
     private fun renderPartyThread() {
@@ -764,8 +1145,10 @@ class PartyRoomActivity : Activity(), ChatHost {
     }
 
     private fun partySig(m: Msg): String =
-        m.text + "|" + m.replyName + "|" + m.replyText + "|" + m.time + "|" +
-            m.rx.entries.joinToString(",") { "${it.key}:${it.value}" }
+        m.fid + "|" + m.senderName + "|" + m.senderColor + "|" + m.text + "|" +
+            m.replyName + "|" + m.replyText + "|" + m.time + "|" + m.type + "|" + m.mediaKey + "|" +
+            (m.mediaKey.isNotBlank() && MediaCache.has(this, m.mediaKey)) + "|" +
+            m.rx.entries.joinToString(",") { "${it.key}:${it.value}:${m.rxCounts[it.key] ?: 1}" }
 
     private fun scrollPartyBottom() {
         partyRv.post {
@@ -817,7 +1200,7 @@ class PartyRoomActivity : Activity(), ChatHost {
 
     private fun showPartyReply(m: Msg, openKeyboard: Boolean = true) {
         partyReplyTo = m
-        partyReplyWho.text = "Replying to " + if (m.own) "You" else peerName()
+        partyReplyWho.text = "Replying to " + if (m.own) "You" else messageName(m)
         partyReplyWhat.text = partyMessageLabel(m)
         partyReplyWrap.visibility = View.VISIBLE
         if (openKeyboard) {
@@ -993,9 +1376,12 @@ class PartyRoomActivity : Activity(), ChatHost {
             dialog.dismiss()
             confirmThen(this@PartyRoomActivity, "Message delete karein?",
                 "Ye message Party chat se hat jayega.") {
-                partyMsgs.removeAll { it.id == m.id }
-                if (partyReplyTo?.id == m.id) clearPartyReply()
-                renderPartyThread()
+                if (m.own && m.fid.isNotBlank()) PartyTower.deleteMessage(m.fid)
+                else {
+                    partyMsgs.removeAll { it.id == m.id }
+                    if (partyReplyTo?.id == m.id) clearPartyReply()
+                    renderPartyThread()
+                }
             }
         })
         sheet.addView(actions, lp(ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1022,9 +1408,11 @@ class PartyRoomActivity : Activity(), ChatHost {
     }
 
     private fun togglePartyReaction(m: Msg, emoji: String) {
+        if (m.fid.isBlank() || !PartyTower.isConnected()) {
+            Toast.makeText(this, "Tower connect nahi", Toast.LENGTH_SHORT).show(); return
+        }
         val adding = m.rx[emoji] != true
-        if (adding) m.rx[emoji] = true else m.rx.remove(emoji)
-        renderPartyThread()
+        PartyTower.sendReaction(m.fid, emoji)
         if (adding) flyPartyReaction(emoji)
     }
 
@@ -1067,6 +1455,104 @@ class PartyRoomActivity : Activity(), ChatHost {
             })
             start()
         }
+    }
+
+    // ------------------------------------------------ selected Tower callbacks
+
+    override fun onPartyTowerStatus(connected: Boolean, label: String) {
+        partyTowerUp = connected
+        if (::partyOnlineText.isInitialized) {
+            partyOnlineText.text = if (connected) "●  $partyMemberCount online" else "📻 Reconnect…"
+            partyOnlineText.setTextColor(if (connected) hex("#86efac") else hex("#fcd34d"))
+            partyOnlineText.contentDescription = label
+        }
+    }
+
+    override fun onPartyMembers(members: List<PartyMember>) {
+        partyMemberCount = members.size.coerceAtLeast(1)
+        if (::partyOnlineText.isInitialized) partyOnlineText.text =
+            if (partyTowerUp) "●  $partyMemberCount online" else "📻 Reconnect…"
+        renderPartyMembers(members)
+    }
+
+    private fun renderPartyMembers(incoming: List<PartyMember>) {
+        if (!::partyMembersList.isInitialized) return
+        val list = if (incoming.isEmpty()) listOf(PartyMember(
+            PartyTower.currentMemberId(), WpUser.me(this), palette.accent[1], System.currentTimeMillis()))
+        else incoming
+        partyMembersTitle.text = "👥 Party Members (${list.size})"
+        partyMembersList.removeAllViews()
+        list.forEach { member ->
+            val mine = member.id == PartyTower.currentMemberId()
+            val chip = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(6), dp(2), dp(9), dp(2))
+                background = roundBox(Color.argb(24, 255, 255, 255), member.color, 20, 1)
+            }
+            chip.addView(DpStore.circle(this, member.name, member.color, 20, isMe = mine), lp(dp(20), dp(20)))
+            chip.addView(TextView(this).apply {
+                text = member.name; textSize = 11f; setTextColor(Color.WHITE)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6) })
+            partyMembersList.addView(chip,
+                lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(25)).apply { rightMargin = dp(5) })
+        }
+    }
+
+    override fun onPartyMessage(message: PartyMessage) {
+        if (partyMsgs.any { it.fid == message.mid }) return
+        val own = message.senderId == PartyTower.currentMemberId()
+        val m = Msg(
+            id = nextPartyMsgId++, text = message.text, own = own,
+            time = message.time.ifBlank {
+                SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(message.ts))
+            }, day = "", read = true, ts = message.ts,
+            replyName = message.replyName, replyText = message.replyText,
+            fid = message.mid, type = message.type,
+            mediaKey = if (message.type == "text") "" else "party_${message.mid}",
+            dur = message.dur, wave = message.wave,
+            senderName = message.name, senderColor = message.color
+        )
+        partyMsgs.add(m)
+        partyMsgs.sortBy { it.ts }
+        while (partyMsgs.size > FirebaseChat.MSG_KEEP) {
+            val old = partyMsgs.removeAt(0)
+            if (old.mediaKey.startsWith("party_")) MediaCache.delete(this, old.mediaKey)
+        }
+        if (System.currentTimeMillis() - message.ts < 5_000L) partyAdapter.entryAnimId = m.id
+        renderPartyThread()
+        if (own || System.currentTimeMillis() - message.ts < 5_000L) scrollPartyBottom()
+    }
+
+    override fun onPartyMessageRemoved(mid: String) {
+        val gone = partyMsgs.firstOrNull { it.fid == mid }
+        if (gone != null && gone.mediaKey.startsWith("party_")) MediaCache.delete(this, gone.mediaKey)
+        partyMsgs.removeAll { it.fid == mid }
+        if (partyReplyTo?.fid == mid) clearPartyReply()
+        renderPartyThread()
+    }
+
+    override fun onPartyMedia(mid: String, bytes: ByteArray) {
+        val key = "party_$mid"
+        MediaCache.save(this, key, bytes)
+        partyMsgs.firstOrNull { it.fid == mid }?.mediaKey = key
+        renderPartyThread()
+    }
+
+    override fun onPartyReactions(mid: String, values: Map<String, Pair<Int, Boolean>>) {
+        val m = partyMsgs.firstOrNull { it.fid == mid } ?: return
+        m.rx.clear(); m.rxCounts.clear()
+        values.forEach { (emoji, state) ->
+            m.rx[emoji] = state.second
+            m.rxCounts[emoji] = state.first
+        }
+        renderPartyThread()
+    }
+
+    override fun onPartyQueue(items: List<PartyQueueItem>, index: Int) {
+        partyQueue.clear(); partyQueue.addAll(items.map { it.copy() })
+        partyQueueIndex = index
+        renderPartyPlaylist()
     }
 
     // ChatAdapter ke liye Party Room host. Bubble gestures/design DM ke exact engine se.

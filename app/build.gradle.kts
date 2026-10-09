@@ -18,7 +18,7 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 1
-        versionName = "0.16-FIRSTPAGE"
+        versionName = "0.17-ROOM-TOWER"
     }
 
     compileOptions {
@@ -43,4 +43,6 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore")   // messages + presence + typing
     implementation("androidx.recyclerview:recyclerview:1.3.2")   // smooth list (Instagram jaisi)
     implementation("com.google.firebase:firebase-messaging")   // push (agle step mein)
+    // Party Room ka selected public MQTT tower (EMQX / HiveMQ / tyckr), pure native WSS.
+    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
 }

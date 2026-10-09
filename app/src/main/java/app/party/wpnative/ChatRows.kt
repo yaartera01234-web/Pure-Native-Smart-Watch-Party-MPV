@@ -21,7 +21,10 @@ class Msg(
     var type: String = "text",   // "text" | "photo" | "voice"
     var mediaKey: String = "",   // phone mein save photo/voice ki chaabi
     var dur: Int = 0,            // voice: kitne second
-    var wave: String = ""        // voice: har 100ms ki awaaz
+    var wave: String = "",       // voice: har 100ms ki awaaz
+    var senderName: String = "", // Party Room mein har member ka apna naam
+    var senderColor: Int = 0,     // Party Room member/avatar accent
+    val rxCounts: LinkedHashMap<String, Int> = LinkedHashMap()
 )
 
 /**

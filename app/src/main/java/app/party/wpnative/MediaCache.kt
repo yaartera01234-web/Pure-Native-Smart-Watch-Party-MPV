@@ -79,14 +79,27 @@ object MediaCache {
         try { val f = file(ctx, key); if (f.exists()) f.readBytes() else null } catch (t: Throwable) { null }
 
     /** Gallery ki photo chhoti karo (Firestore ki 1MB had ke andar rakhne ke liye). */
-    fun compress(ctx: Context, uri: Uri): ByteArray? {
+    fun compress(ctx: Context, uri: Uri): ByteArray? = compress(ctx, uri, MAX_BYTES)
+
+    /** Party MQTT blob ke liye website jaisa sakht ~300KB cap. */
+    fun compress(ctx: Context, uri: Uri, maxBytes: Int): ByteArray? {
         return try {
             val bmp = decode(ctx, uri) ?: return null
             var q = 70
             var out = encode(bmp, q)
-            while (out.size > MAX_BYTES && q > 35) { q -= 12; out = encode(bmp, q) }
-            out
+            while (out.size > maxBytes && q > 28) { q -= 8; out = encode(bmp, q) }
+            if (out.size <= maxBytes) out else null
         } catch (t: Throwable) { null }
+    }
+
+    /** Explicit Party Leave/new process par sirf temporary Room media saaf. */
+    fun deletePrefix(ctx: Context, prefix: String) {
+        try {
+            val safe = prefix.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+            ctx.filesDir.listFiles()?.forEach { f ->
+                if (f.isFile && f.name.startsWith("m_$safe")) f.delete()
+            }
+        } catch (t: Throwable) { }
     }
 
     private fun decode(ctx: Context, uri: Uri): Bitmap? {
