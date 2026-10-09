@@ -199,8 +199,8 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 adjustViewBounds = true
                 maxWidth = host.dp(220)
                 maxHeight = host.dp(300)
-                minWidth = host.dp(150)
-                minHeight = host.dp(110)
+                minimumWidth = host.dp(150)
+                minimumHeight = host.dp(110)
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 clipToOutline = true
                 outlineProvider = object : ViewOutlineProvider() {
