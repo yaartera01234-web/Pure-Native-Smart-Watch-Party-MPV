@@ -119,9 +119,29 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         loadPrefs()
+        askNotifyPermission()
         setContentView(buildJoinScreen())
         applyTheme()
         restoreAvatar()
+        saveFcmToken()
+    }
+
+    /** Android 13+ par notification ki ijazat (push ke liye zaroori). */
+    private fun askNotifyPermission() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+        }
+    }
+
+    /** Apna FCM token Firebase mein save karo — doosra phone isi par push bhejega. */
+    private fun saveFcmToken() {
+        try {
+            if (!FirebaseChat.isReady(this)) return
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().token
+                .addOnSuccessListener { FirebaseChat.saveToken(this, WpUser.me(this), it) }
+        } catch (t: Throwable) { }
     }
 
     private fun loadPrefs() {
@@ -218,14 +238,6 @@ class MainActivity : Activity() {
         // Name
         nameInput = styledEdit("Apna name likho...", 20, 17f)
         card.addView(nameInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
-        // Chhota hint: yahi naam doston ki chat mein dikhega
-        card.addView(TextView(this).apply {
-            text = "Ye naam chat mein doston ko dikhega"
-            textSize = 11f
-            setTextColor(Color.argb(160, 255, 255, 255))
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(4)
-        })
 
         // Room
         roomInput = styledEdit("Room name... (doston se poocho!)", 20, 16f)

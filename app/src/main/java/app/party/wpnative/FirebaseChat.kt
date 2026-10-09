@@ -134,6 +134,27 @@ object FirebaseChat {
         } catch (t: Throwable) { }
     }
 
+    /** Apna FCM token save karo (doosra phone isi par push bhejega). */
+    fun saveToken(ctx: Context, name: String, token: String) {
+        if (!isReady(ctx)) return
+        try {
+            db(ctx).collection("users").document(name)
+                .set(mapOf("fcmToken" to token), SetOptions.merge())
+        } catch (t: Throwable) { }
+    }
+
+    /** Doosre ka FCM token + online haalat (push bhejne se pehle). */
+    fun getToken(ctx: Context, name: String, cb: (String?, Boolean) -> Unit) {
+        if (!isReady(ctx)) { cb(null, false); return }
+        try {
+            db(ctx).collection("users").document(name).get()
+                .addOnSuccessListener { snap ->
+                    cb(snap.getString("fcmToken"), snap.getBoolean("online") ?: false)
+                }
+                .addOnFailureListener { cb(null, false) }
+        } catch (t: Throwable) { cb(null, false) }
+    }
+
     fun listenPresence(ctx: Context, name: String, onState: (Boolean, Long) -> Unit): ListenerRegistration? {
         if (!isReady(ctx)) return null
         return try {

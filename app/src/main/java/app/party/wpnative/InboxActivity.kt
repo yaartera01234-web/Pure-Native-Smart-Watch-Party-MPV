@@ -51,7 +51,17 @@ class InboxActivity : Activity() {
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
+        askNotifyPermission()
         setContentView(buildScreen())
+    }
+
+    /** Android 13+ par notification ki ijazat (push ke liye zaroori). */
+    private fun askNotifyPermission() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+        }
     }
 
     override fun onResume() {
@@ -259,20 +269,8 @@ class InboxActivity : Activity() {
                     Toast.makeText(this, "Chat clear (demo)", Toast.LENGTH_SHORT).show()
                 }
             },
-            "✏️  Apna naam badlo" to { askMyName() },
             "👤  Remove Friend" to { showRemoveSheet() }
         ))
-    }
-
-    /** Apna naam — doosre phone par yahi dikhayi dega (chatId isi se banti hai). */
-    private fun askMyName() {
-        askTextDialog(this, "Apna naam", "Doston ko yahi naam dikhega", WpUser.me(this)) { n ->
-            if (n.isBlank()) return@askTextDialog
-            WpUser.setName(this, n)
-            myNameText.text = "Tum: $n"
-            fillInbox()
-            Toast.makeText(this, "Naam ho gaya: $n", Toast.LENGTH_SHORT).show()
-        }
     }
 
     /** 👤+ : naya dost jodo (dono phone par ek hi naam likhna hoga). */

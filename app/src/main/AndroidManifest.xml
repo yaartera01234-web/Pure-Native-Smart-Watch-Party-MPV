@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="Watch Party"
@@ -30,6 +31,19 @@
             android:name=".CallsActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+        <!-- Push notification (FCM) + notification se seedha jawab -->
+        <service
+            android:name=".WpMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <receiver android:name=".ReplyReceiver" android:exported="false" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notif" />
+
         <activity
             android:name=".ChatActivity"
             android:exported="false"

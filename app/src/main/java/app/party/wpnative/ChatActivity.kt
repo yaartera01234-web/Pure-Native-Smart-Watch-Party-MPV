@@ -158,9 +158,11 @@ class ChatActivity : Activity() {
         refreshStatus()
         statusHandler.post(statusTick)
         FirebaseChat.setPresence(this, me, true)
+        WpActive.peer = peer          // is chat ki notification nahi chahiye
     }
 
     override fun onPause() {
+        WpActive.peer = null
         statusHandler.removeCallbacks(statusTick)
         FirebaseChat.setTyping(this, chatId, me, false)
         FirebaseChat.setPresence(this, me, false)
@@ -168,6 +170,7 @@ class ChatActivity : Activity() {
     }
 
     override fun onDestroy() {
+        WpActive.peer = null
         msgListener?.remove(); msgListener = null
         presenceListener?.remove(); presenceListener = null
         typingListener?.remove(); typingListener = null
@@ -1097,6 +1100,7 @@ class ChatActivity : Activity() {
         // Firebase (agar ready ho) — warna sirf local/demo
         val cm = ChatMsg(from = me, text = txt, ts = now, replyName = m.replyName, replyText = m.replyText)
         if (FirebaseChat.send(this, chatId, cm)) m.fid = cm.id
+        Push.notifyPeer(this, peer, me, txt)     // app background mein ho to push jaye
         trimToLimit()
         saveCache()
         animId = m.id
