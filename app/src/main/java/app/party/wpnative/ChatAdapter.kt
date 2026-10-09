@@ -68,12 +68,6 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         if (h is MsgVH) live.remove(h)
     }
 
-    /** 65 second -> "1:05" (website ka fmtDur). */
-    private fun fmtDur(sec: Int): String {
-        val v = Math.max(0, sec)
-        return (v / 60).toString() + ":" + String.format("%02d", v % 60)
-    }
-
     private companion object {
         const val T_MINE = 0
         const val T_PEER = 1
@@ -718,4 +712,10 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         override fun areContentsTheSame(o: Int, n: Int) =
             old[o].sig == next[n].sig && old[o].kind == next[n].kind
     }
+}
+
+/** 65 second -> "1:05" (website ka fmtDur) — voice bubble ke second. */
+private fun fmtDur(sec: Int): String {
+    val v = Math.max(0, sec)
+    return (v / 60).toString() + ":" + String.format("%02d", v % 60)
 }
