@@ -44,6 +44,10 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize"
             android:screenOrientation="unspecified" />
+        <service
+            android:name=".PartyTaskService"
+            android:exported="false"
+            android:stopWithTask="false" />
         <!-- Push notification (FCM) + notification se seedha jawab -->
         <service
             android:name=".WpMessagingService"

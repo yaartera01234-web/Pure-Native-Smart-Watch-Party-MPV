@@ -217,6 +217,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         }
         MediaCache.deletePrefix(this, "party_")
         PartyTower.enter(this, room, WpUser.me(this), prefs.getInt("tower", 0), this)
+        PartyTaskService.start(this)
     }
 
     /**
@@ -248,6 +249,10 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     }
 
     override fun onDestroy() {
+        // Recents se poori task urrna proper Leave hai; rotation/system reclaim nahi.
+        if (isFinishing && !isChangingConfigurations && !leavingParty && PartyTower.hasLiveSession()) {
+            PartyTaskService.leaveRemovedTask(applicationContext)
+        }
         PartyTower.detach(this)
         VoiceRec.abort()
         PartyRoomRoute.detach(this)
@@ -274,6 +279,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         if (::partyAdapter.isInitialized) renderPartyThread()
         PartyTower.leave {
             MediaCache.deletePrefix(this, "party_")
+            PartyTaskService.stop(applicationContext)
             if (!isFinishing) {
                 finish()
                 overridePendingTransition(0, 0)
@@ -1157,22 +1163,27 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            background = roundBox(Color.argb(23, 255, 255, 255),
-                Color.argb(36, 255, 255, 255), 12, 1)
+            setPadding(dp(10), dp(7), dp(10), dp(7))
+            background = roundBox(Color.argb(20, 255, 255, 255),
+                Color.TRANSPARENT, 12, 0)
         }
-        val line = View(this).apply { setBackgroundColor(hex("#d8b4fe")) }
-        bar.addView(line, lp(dp(2), ViewGroup.LayoutParams.MATCH_PARENT))
+        val line = View(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(hex("#f472b6"), hex("#a78bfa"))).apply {
+                cornerRadius = dp(2).toFloat()
+            }
+        }
+        bar.addView(line, lp(dp(4), ViewGroup.LayoutParams.MATCH_PARENT))
         val replyTextCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         partyReplyWho = TextView(this).apply {
             textSize = 11f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(hex("#d8b4fe"))
+            setTextColor(hex("#f9a8d4"))
             setSingleLine(true)
         }
         partyReplyWhat = TextView(this).apply {
-            textSize = 11.5f
-            setTextColor(Color.argb(190, 255, 255, 255))
+            textSize = 12f
+            setTextColor(hex("#d1d5db"))
             setSingleLine(true)
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
@@ -1183,21 +1194,26 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         })
         bar.addView(TextView(this).apply {
             text = "✕"
-            textSize = 14f
+            textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(31, 255, 255, 255))
+            }
             setOnClickListener { clearPartyReply() }
-        }, lp(dp(40), dp(36)))
+        }, lp(dp(26), dp(26)))
         partyReplyWrap = FrameLayout(this).apply {
             visibility = View.GONE
-            setPadding(dp(8), dp(4), dp(8), 0)
-            addView(bar)
+            setPadding(dp(8), dp(4), dp(8), dp(6))
+            addView(bar, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
     }
 
     private fun showPartyReply(m: Msg, openKeyboard: Boolean = true) {
         partyReplyTo = m
-        partyReplyWho.text = "Replying to " + if (m.own) "You" else messageName(m)
+        partyReplyWho.text = "↩ Replying to " + if (m.own) "You" else messageName(m)
         partyReplyWhat.text = partyMessageLabel(m)
         partyReplyWrap.visibility = View.VISIBLE
         if (openKeyboard) {
@@ -1557,13 +1573,20 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     override fun peerName(): String = "Party"
     override fun meName(): String = WpUser.me(this)
     override fun peerColorInt(): Int = palette.accent[2]
+    override fun originalPartyChat(): Boolean = true
     override fun mineBubbleBg(): GradientDrawable = GradientDrawable(
         GradientDrawable.Orientation.TL_BR, partyBubble.own.copyOf()).apply {
-        cornerRadius = dp(22).toFloat()
+        val big = dp(16).toFloat(); val small = dp(4).toFloat()
+        // Website: apne bubble ka sirf top-right kona 4px, baqi 16px.
+        cornerRadii = floatArrayOf(big, big, small, small, big, big, big, big)
+        val style = prefs.getInt("bubble", 1)
+        if (style in 1..7) setStroke(dp(1), Color.argb(56, 255, 255, 255))
     }
     override fun peerBubbleBg(): GradientDrawable = GradientDrawable(
         GradientDrawable.Orientation.TL_BR, partyBubble.other.copyOf()).apply {
-        cornerRadius = dp(22).toFloat()
+        val big = dp(16).toFloat(); val small = dp(4).toFloat()
+        // Website: doosre ke bubble ka sirf top-left kona 4px.
+        cornerRadii = floatArrayOf(small, small, big, big, big, big, big, big)
         setStroke(dp(1), Color.argb(66, 255, 255, 255))
     }
     override fun mineBubbleText(): Int = partyBubble.ownText

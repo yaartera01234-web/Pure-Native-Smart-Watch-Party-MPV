@@ -127,8 +127,13 @@ class BgMsgService : Service() {
         return START_STICKY
     }
 
-    /** Recents se swipe away karne par bhi service chalti rahe. */
+    /**
+     * DM listener swipe-away ke baad zinda rehta hai, lekin live Party session ke liye
+     * wahi OS event proper Leave hai. Dedicated sentinel miss ho to ye foreground
+     * service backup signal deti hai; helper duplicate MQTT Leave ko rokta hai.
+     */
     override fun onTaskRemoved(rootIntent: Intent?) {
+        PartyTaskService.leaveRemovedTask(this)
         try {
             handler.removeCallbacks(watchdog)
             handler.postDelayed(watchdog, 2000)

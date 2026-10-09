@@ -157,6 +157,7 @@ object PartyTower {
 
     fun towerLabel(index: Int): String = towerNames[index.coerceIn(towerNames.indices)]
     fun isConnected(): Boolean = connected
+    fun hasLiveSession(): Boolean = !explicitLeaving && (joining || connected || client != null)
     fun currentMemberId(): String = memberId
 
     /** Lobby ke Enter Party ke baad hi call hota hai. */

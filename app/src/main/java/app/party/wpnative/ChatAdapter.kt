@@ -38,6 +38,8 @@ interface ChatHost {
     fun messageName(m: Msg): String = if (m.own) "You" else m.senderName.ifBlank { peerName() }
     fun messageColor(m: Msg): Int = if (m.own) hex("#f9a8d4")
         else m.senderColor.takeIf { it != 0 } ?: peerColorInt()
+    /** Party Room website geometry; DM ka approved 22dp look alag hi rehta hai. */
+    fun originalPartyChat(): Boolean = false
     fun tick(m: Msg): CharSequence
     fun bubbleMaxWidth(): Int
     fun onSwipeReply(m: Msg)
@@ -160,6 +162,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         private val chips: LinearLayout
         private val timeTv: TextView
         private val avatarSlot: FrameLayout
+        private val partyStyle = host.originalPartyChat()
 
         private var bound: Msg? = null
         private var chipSig = ""
@@ -180,7 +183,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 textSize = 11f
                 setTypeface(typeface, Typeface.BOLD)
                 setTextColor(if (mine) host.hex("#f9a8d4") else host.peerColorInt())
-                alpha = 0.8f
+                alpha = if (partyStyle) 1f else 0.8f
                 setSingleLine(true)
                 setPadding(padStart, 0, padEnd, 0)
             }
@@ -192,38 +195,49 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             // ---- bubble ----
             bubble = LinearLayout(host.ctx()).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), dp(10), dp(14), dp(10))
+                if (partyStyle) setPadding(dp(12), dp(8), dp(12), dp(6))
+                else setPadding(dp(14), dp(10), dp(14), dp(10))
                 background = if (mine) host.mineBubbleBg() else host.peerBubbleBg()
                 if (mine) elevation = dp(6).toFloat()
             }
             quote = LinearLayout(host.ctx()).apply {
                 orientation = LinearLayout.HORIZONTAL
-                setPadding(dp(7), dp(5), dp(7), dp(5))
-                background = host.roundBox(Color.argb(56, 0, 0, 0), Color.TRANSPARENT, 4, 0)
-                addView(View(host.ctx()).apply { setBackgroundColor(Color.argb(217, 255, 255, 255)) },
-                    LinearLayout.LayoutParams(dp(2), ViewGroup.LayoutParams.MATCH_PARENT))
+                if (partyStyle) setPadding(0, dp(5), dp(9), dp(5))
+                else setPadding(dp(7), dp(5), dp(7), dp(5))
+                background = host.roundBox(
+                    Color.argb(if (partyStyle && !mine) 71 else 56, 0, 0, 0),
+                    Color.TRANSPARENT, if (partyStyle) 8 else 4, 0)
+                addView(View(host.ctx()).apply {
+                    setBackgroundColor(
+                        if (!partyStyle) Color.argb(217, 255, 255, 255)
+                        else if (mine) host.hex("#fde68a") else host.hex("#4ade80"))
+                }, LinearLayout.LayoutParams(dp(if (partyStyle) 3 else 2),
+                    ViewGroup.LayoutParams.MATCH_PARENT))
                 val txt = LinearLayout(host.ctx()).apply { orientation = LinearLayout.VERTICAL }
                 quoteName = TextView(host.ctx()).apply {
                     textSize = 11f
                     setTypeface(typeface, Typeface.BOLD)
-                    setTextColor(if (mine) host.hex("#ffe6a8") else host.hex("#c4b5fd"))
+                    setTextColor(
+                        if (mine) host.hex("#fde68a")
+                        else host.hex(if (partyStyle) "#4ade80" else "#c4b5fd"))
                     setSingleLine(true)
                 }
                 quoteText = TextView(host.ctx()).apply {
-                    textSize = 11.5f
+                    textSize = if (partyStyle) 12f else 11.5f
                     setTextColor(Color.WHITE)
+                    alpha = if (partyStyle) 0.9f else 1f
                     setSingleLine(true)
                 }
                 txt.addView(quoteName)
                 txt.addView(quoteText, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 addView(txt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    leftMargin = dp(6)
+                    leftMargin = dp(if (partyStyle) 9 else 6)
                 })
             }
             bubble.addView(quote, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = dp(5)
+                bottomMargin = dp(if (partyStyle) 6 else 5)
             })
 
             // ---- photo (website: .chat-photo img max 220x300, radius 12) ----
@@ -297,7 +311,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 textSize = 14f
                 setTextColor(if (mine) host.mineBubbleText() else host.peerBubbleText())
                 includeFontPadding = true
-                setLineSpacing(0f, 1.55f)
+                setLineSpacing(0f, if (partyStyle) 1.35f else 1.55f)
                 maxWidth = host.bubbleMaxWidth()
             }
             bubble.addView(textTv)
@@ -310,6 +324,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 alpha = 0f
                 scaleX = 0.7f
                 scaleY = 0.7f
+                visibility = if (partyStyle) View.GONE else View.VISIBLE
             }
 
             val bubbleWrap = FrameLayout(host.ctx()).apply {
@@ -333,7 +348,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             }
             col.addView(chips, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(4)
+                topMargin = dp(if (partyStyle) 3 else 4)
             })
 
             // ---- time + ✓✓ ----
@@ -352,13 +367,13 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
 
             if (mine) {
                 row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    rightMargin = dp(8)
+                    rightMargin = dp(if (partyStyle) 6 else 8)
                 })
                 row.addView(avatarSlot, LinearLayout.LayoutParams(dp(34), dp(34)))
             } else {
                 row.addView(avatarSlot, LinearLayout.LayoutParams(dp(34), dp(34)))
                 row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    leftMargin = dp(8)
+                    leftMargin = dp(if (partyStyle) 6 else 8)
                 })
             }
 
@@ -456,18 +471,31 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
              * RecyclerView ki layout-animation NAHI — is liye size kabhi ghalat nahi hota.
              */
             if (animate) {
-                row.alpha = 0.35f
-                row.translationY = host.dp(22).toFloat()
-                row.scaleX = 0.96f
-                row.scaleY = 0.96f
-                row.animate()
-                    .alpha(1f)
-                    .translationY(0f)
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(260L)
-                    .setInterpolator(DecelerateInterpolator(1.8f))
-                    .start()
+                if (partyStyle) {
+                    // Website @keyframes pop: scale(.9), opacity 0 -> normal in 200ms.
+                    row.alpha = 0f
+                    row.translationY = 0f
+                    row.scaleX = 0.9f
+                    row.scaleY = 0.9f
+                    row.animate()
+                        .alpha(1f).scaleX(1f).scaleY(1f)
+                        .setDuration(200L)
+                        .setInterpolator(DecelerateInterpolator())
+                        .start()
+                } else {
+                    row.alpha = 0.35f
+                    row.translationY = host.dp(22).toFloat()
+                    row.scaleX = 0.96f
+                    row.scaleY = 0.96f
+                    row.animate()
+                        .alpha(1f)
+                        .translationY(0f)
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(260L)
+                        .setInterpolator(DecelerateInterpolator(1.8f))
+                        .start()
+                }
             }
         }
 
@@ -560,24 +588,31 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             if (m.rx.isEmpty()) return
             m.rx.forEach { (emoji, byMe) ->
                 val on = byMe
+                val count = m.rxCounts[emoji]?.coerceAtLeast(1) ?: 1
                 chips.addView(TextView(host.ctx()).apply {
-                    text = "$emoji ${m.rxCounts[emoji]?.coerceAtLeast(1) ?: 1}"
-                    textSize = 12.5f
+                    text = if (partyStyle && count == 1) emoji else "$emoji $count"
+                    textSize = if (partyStyle) 12f else 12.5f
                     setTypeface(typeface, Typeface.BOLD)
                     setTextColor(Color.WHITE)
                     gravity = Gravity.CENTER
-                    minHeight = host.dp(28)
-                    setPadding(host.dp(9), host.dp(4), host.dp(9), host.dp(4))
+                    minHeight = host.dp(if (partyStyle) 22 else 28)
+                    if (partyStyle) setPadding(host.dp(7), host.dp(1), host.dp(7), host.dp(1))
+                    else setPadding(host.dp(9), host.dp(4), host.dp(9), host.dp(4))
                     includeFontPadding = true
                     background = GradientDrawable().apply {
-                        setColor(if (on) Color.argb(150, 244, 114, 182) else Color.argb(235, 34, 26, 62))
+                        setColor(
+                            if (partyStyle && on) Color.argb(77, 244, 114, 182)
+                            else if (partyStyle) Color.argb(191, 8, 8, 24)
+                            else if (on) Color.argb(150, 244, 114, 182)
+                            else Color.argb(235, 34, 26, 62))
                         cornerRadius = host.dp(12).toFloat()
-                        setStroke(host.dp(1), if (on) host.hex("#f472b6") else Color.argb(120, 255, 255, 255))
+                        setStroke(host.dp(1), if (on) host.hex("#f472b6")
+                            else Color.argb(if (partyStyle) 56 else 120, 255, 255, 255))
                     }
                     setOnClickListener { bound?.let { host.onChipClick(it, emoji) } }
                 }, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    marginEnd = host.dp(4)
+                    marginEnd = host.dp(if (partyStyle) 3 else 4)
                 })
             }
         }
@@ -616,12 +651,14 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                             dx = ddx
                             val slide = Math.min(dx, maxSlide)
                             row.translationX = slide
-                            val prog = (slide / fireAt).coerceIn(0f, 1f)
-                            handle.alpha = prog
-                            handle.scaleX = 0.7f + 0.3f * prog
-                            handle.scaleY = handle.scaleX
-                            handle.rotation = -25f * (1f - prog)
-                            handle.background = swipeBg(slide >= fireAt)
+                            if (!partyStyle) {
+                                val prog = (slide / fireAt).coerceIn(0f, 1f)
+                                handle.alpha = prog
+                                handle.scaleX = 0.7f + 0.3f * prog
+                                handle.scaleY = handle.scaleX
+                                handle.rotation = -25f * (1f - prog)
+                                handle.background = swipeBg(slide >= fireAt)
+                            }
                             true
                         } else false
                     }
@@ -631,8 +668,10 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                             val fire = dx > fireAt && ev.actionMasked == MotionEvent.ACTION_UP
                             row.animate().translationX(0f).setDuration(200L)
                                 .setInterpolator(DecelerateInterpolator()).start()
-                            handle.animate().alpha(0f).scaleX(0.7f).scaleY(0.7f).rotation(0f)
-                                .setDuration(180L).start()
+                            if (!partyStyle) {
+                                handle.animate().alpha(0f).scaleX(0.7f).scaleY(0.7f).rotation(0f)
+                                    .setDuration(180L).start()
+                            }
                             v.parent?.requestDisallowInterceptTouchEvent(false)
                             swiping = false
                             dx = 0f
@@ -643,8 +682,11 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                     else -> false
                 }
             }
+            // Browser mein listener row par hai aur bubble event DOM mein bubble-up hota hai.
+            // Native mein dono par ek listener lagane se har MOVE do baar aata tha; Party
+            // ke liye bubble ka ek hi stream website jaisa smooth translate karta hai.
             bubble.setOnTouchListener(listener)
-            row.setOnTouchListener(listener)
+            if (!partyStyle) row.setOnTouchListener(listener)
         }
 
         private fun swipeBg(armed: Boolean): GradientDrawable = GradientDrawable().apply {
@@ -660,7 +702,9 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                     gravity = Gravity.BOTTOM or (if (mine) Gravity.END else Gravity.START)
                     layoutParams = RecyclerView.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = host.dp(10) }
+                        ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = host.dp(if (host.originalPartyChat()) 6 else 10)
+                    }
                 }
         }
     }
