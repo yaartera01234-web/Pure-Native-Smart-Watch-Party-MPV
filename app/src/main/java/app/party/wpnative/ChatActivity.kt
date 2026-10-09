@@ -1,5 +1,7 @@
 package app.party.wpnative
 
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -25,6 +27,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.Window
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.LinearInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.view.View
@@ -86,6 +89,7 @@ class ChatActivity : Activity() {
     private lateinit var replyWho: TextView
     private lateinit var replyWhat: TextView
     private lateinit var emojiWrap: FrameLayout
+    private lateinit var flyLayer: FrameLayout      // Instagram wale udte emoji isi par chalte hain
     private lateinit var emojiInput: EditText
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -133,6 +137,10 @@ class ChatActivity : Activity() {
         col.addView(buildComposer(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         root.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        // Udte emojis ki layer (chhune se kuch nahi hota, neeche wale button chalu rahte hain)
+        flyLayer = FrameLayout(this).apply { isClickable = false }
+        root.addView(flyLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         return root
     }
 
@@ -323,7 +331,32 @@ class ChatActivity : Activity() {
             setTextColor(if (m.own) Color.WHITE else hex("#f3efff"))
             setLineSpacing(0f, 1.45f)
         })
-        col.addView(bubble, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // Swipe karte waqt ↩ wala nishan (website .swh4) — bubble ke bahar, swipe wali taraf
+        val handle = TextView(this).apply {
+            text = "↩"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            alpha = 0f
+            scaleX = 0.7f
+            scaleY = 0.7f
+            background = swipeHandleBg(false)
+        }
+        val bubbleWrap = FrameLayout(this).apply {
+            clipChildren = false
+            val side = if (m.own) Gravity.END else Gravity.START
+            addView(bubble, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER_VERTICAL or side))
+            addView(handle, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER_VERTICAL or side).apply {
+                if (m.own) rightMargin = -dp(30) else leftMargin = -dp(30)
+            })
+        }
+        col.clipChildren = false
+        row.clipChildren = false
+        threadBox.clipChildren = false
+        scroll.clipChildren = false
+        col.addView(bubbleWrap, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         // --- reactions (chhoti chips) ---
         if (m.rx.isNotEmpty()) col.addView(buildChips(m),
@@ -361,7 +394,7 @@ class ChatActivity : Activity() {
             row.addView(av, lp(dp(34), dp(34)))
             row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
         }
-        bindSwipe(row, m)
+        bindSwipe(row, m, handle)
         return row
     }
 
@@ -370,7 +403,7 @@ class ChatActivity : Activity() {
      * dayen swipe -> 12dp par pakad, zyada se zyada 110dp slide,
      * 60dp se zyada par chhodne par reply set, 200ms mein wapas.
      */
-    private fun bindSwipe(row: View, m: Msg) {
+    private fun bindSwipe(row: View, m: Msg, handle: TextView) {
         val startAt = dp(12).toFloat()
         val maxSlide = dp(110).toFloat()
         val fireAt = dp(60).toFloat()
@@ -395,7 +428,15 @@ class ChatActivity : Activity() {
                     }
                     if (swiping) {
                         dx = ddx
-                        v.translationX = Math.min(dx, maxSlide)
+                        val slide = Math.min(dx, maxSlide)
+                        v.translationX = slide
+                        // ↩ nishan: jitni kheench utni roshni; 60dp ke baad hara (armed)
+                        val prog = (slide / fireAt).coerceIn(0f, 1f)
+                        handle.alpha = prog
+                        handle.scaleX = 0.7f + 0.3f * prog
+                        handle.scaleY = handle.scaleX
+                        handle.rotation = -25f * (1f - prog)
+                        handle.background = swipeHandleBg(slide >= fireAt)
                         true
                     } else false
                 }
@@ -406,6 +447,7 @@ class ChatActivity : Activity() {
                         val fire = dx > fireAt && ev.actionMasked == MotionEvent.ACTION_UP
                         v.animate().translationX(0f).setDuration(200L)
                             .setInterpolator(DecelerateInterpolator()).start()
+                        handle.animate().alpha(0f).scaleX(0.7f).scaleY(0.7f).rotation(0f).setDuration(180L).start()
                         v.parent?.requestDisallowInterceptTouchEvent(false)
                         swiping = false
                         dx = 0f
@@ -416,6 +458,65 @@ class ChatActivity : Activity() {
                 else -> false
             }
         }
+    }
+
+    /** ↩ nishan ka background: neela (chal raha) / hara (chhodne par reply pakka). */
+    private fun swipeHandleBg(armed: Boolean): GradientDrawable = GradientDrawable().apply {
+        setColor(if (armed) Color.argb(80, 49, 209, 88) else Color.argb(46, 84, 232, 255))
+        cornerRadius = dp(12).toFloat()
+        setStroke(dp(1), if (armed) hex("#31d158") else Color.argb(115, 84, 232, 255))
+    }
+
+    /**
+     * Instagram wala jadoo: emoji neeche se upar fly hoke ~3 second mein hawa ho jaye.
+     * Ek se zyada emoji saath saath ud sakte hain (har reaction apna animator banata hai).
+     */
+    private fun flyReaction(emoji: String) {
+        val v = TextView(this).apply {
+            text = emoji
+            textSize = 30f
+            alpha = 0f
+        }
+        flyLayer.addView(v, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(96) })
+
+        val h = if (flyLayer.height > 0) flyLayer.height else dp(420)
+        val rise = (h * (0.5f + Math.random().toFloat() * 0.3f)).coerceAtLeast(dp(180).toFloat())
+        val drift = (if (Math.random() < 0.5) -1 else 1) * dp(18 + (Math.random() * 34).toInt())
+        val spin = (if (Math.random() < 0.5) -1 else 1) * (8f + Math.random().toFloat() * 16f)
+
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 3000L
+            interpolator = LinearInterpolator()
+            addUpdateListener { a ->
+                val t = a.animatedFraction
+                v.translationY = -rise * t
+                v.translationX = (drift * Math.sin(t.toDouble() * Math.PI * 1.6)).toFloat()
+                v.rotation = spin * t
+                val pop = Math.min(1f, t * 7f)
+                v.scaleX = 0.5f + 0.9f * pop
+                v.scaleY = v.scaleX
+                v.alpha = when {
+                    t < 0.07f -> t / 0.07f
+                    t > 0.62f -> (1f - (t - 0.62f) / 0.38f).coerceIn(0f, 1f)
+                    else -> 1f
+                }
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) { flyLayer.removeView(v) }
+            })
+            start()
+        }
+    }
+
+    /** Demo: doosri taraf se reaction (asli chat mein net se aayegi) -> emoji ud kar dikhega. */
+    private fun peerReact(m: Msg) {
+        val emoji = "❤️"
+        if (m.rx.containsKey(emoji)) return
+        m.rx[emoji] = false
+        renderThread()
+        flyReaction(emoji)
     }
 
     /** Bubble ke andar reply ka hissa (website .quote). */
@@ -700,6 +801,8 @@ class ChatActivity : Activity() {
         renderThread()
         scrollBottom()
         input.setText("")
+        // Demo: kuch der baad doosri taraf se reaction -> emoji udta hua upar jayega
+        window.decorView.postDelayed({ if (!isFinishing) peerReact(m) }, 1500)
         // Demo: thodi der baad doosri taraf "parh liya" -> ✓✓ neela
         window.decorView.postDelayed({
             if (!isFinishing && msgs.any { it.id == m.id }) { m.read = true; renderThread() }
@@ -794,8 +897,10 @@ class ChatActivity : Activity() {
     }
 
     private fun toggleRx(m: Msg, emoji: String) {
-        if (m.rx[emoji] == true) m.rx.remove(emoji) else m.rx[emoji] = true
+        val adding = m.rx[emoji] != true
+        if (adding) m.rx[emoji] = true else m.rx.remove(emoji)
         renderThread()
+        if (adding) flyReaction(emoji)
     }
 
     private fun deleteMsg(m: Msg) {
