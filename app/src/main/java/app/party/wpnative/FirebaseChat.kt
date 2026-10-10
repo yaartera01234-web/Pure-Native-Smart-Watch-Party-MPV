@@ -415,17 +415,17 @@ object FirebaseChat {
         } catch (t: Throwable) { }
     }
 
-    /** Doosra wala likh raha hai? (4 second purana signal = chhup jao) */
-    fun listenTyping(ctx: Context, chatId: String, me: String, onTyping: (Boolean) -> Unit): ListenerRegistration? {
+    /** Doosra wala likh raha hai? Fresh signal par uska actual live naam, warna null. */
+    fun listenTyping(ctx: Context, chatId: String, me: String, onTyping: (String?) -> Unit): ListenerRegistration? {
         if (!isReady(ctx)) return null
         return try {
             db(ctx).collection("typing").document(chatId)
                 .addSnapshotListener { snap, _ ->
-                    if (snap == null || !snap.exists()) { onTyping(false); return@addSnapshotListener }
-                    val who = snap.getString("who") ?: ""
+                    if (snap == null || !snap.exists()) { onTyping(null); return@addSnapshotListener }
+                    val who = snap.getString("who")?.trim().orEmpty()
                     val ts = snap.getLong("ts") ?: 0L
                     val fresh = System.currentTimeMillis() - ts < 4000L
-                    onTyping(who.isNotBlank() && who != me && fresh)
+                    onTyping(who.takeIf { it.isNotBlank() && it != me && fresh })
                 }
         } catch (t: Throwable) { null }
     }
@@ -441,6 +441,7 @@ object FirebaseChat {
         try {
             val now = System.currentTimeMillis()
             val avatar = DpStore.shareableAvatar(ctx)
+            val previous = WpUser.publishedName(ctx)
             db(ctx).collection("chats").document(FRIEND_CODE_CHAT)
                 .collection("msgs").document(code).set(
                     mapOf(
@@ -452,7 +453,13 @@ object FirebaseChat {
                         "updatedAt" to now
                     ),
                     SetOptions.merge()
-                )
+                ).addOnSuccessListener {
+                    // Naam badla ho to purana name-keyed presence hamesha online na atka rahe.
+                    if (previous.isNotBlank() && !previous.equals(name, ignoreCase = true)) {
+                        setPresence(ctx, previous, false)
+                    }
+                    WpUser.markNamePublished(ctx, name)
+                }
         } catch (_: Throwable) { }
     }
 
@@ -477,6 +484,35 @@ object FirebaseChat {
                 }
                 .addOnFailureListener { cb(null) }
         } catch (_: Throwable) { cb(null) }
+    }
+
+    /**
+     * Open DM ke liye profile ka live listener. Stable Friend Code same rehta hai, is liye
+     * doosra user naam/DP badle to header, message labels aur typing avatar foran update hote hain.
+     */
+    fun listenFriendProfile(
+        ctx: Context,
+        code: String,
+        cb: (FriendProfile?) -> Unit
+    ): ListenerRegistration? {
+        val raw = WpUser.normalizeFriendCode(code)
+        if (!isReady(ctx) || raw.length != 8) { cb(null); return null }
+        return try {
+            db(ctx).collection("chats").document(FRIEND_CODE_CHAT)
+                .collection("msgs").document(raw)
+                .addSnapshotListener { snap, _ ->
+                    val name = (snap?.getString("name") ?: snap?.getString("from"))
+                        ?.trim().orEmpty().take(40)
+                    if (snap == null || !snap.exists() || name.isBlank()) cb(null)
+                    else {
+                        val avatarType = snap.getString("avatarType").orEmpty()
+                        val avatarData = snap.getString("avatarData").orEmpty()
+                        DpStore.rememberRemote(ctx, name, avatarType, avatarData)
+                        cb(FriendProfile(raw, name, snap.getString("color") ?: "#8b72ff",
+                            avatarType, avatarData))
+                    }
+                }
+        } catch (_: Throwable) { cb(null); null }
     }
 
     /** Target code ke Inbox mein first-contact request rakho/refresh karo. */

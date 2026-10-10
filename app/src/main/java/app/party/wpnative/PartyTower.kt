@@ -257,7 +257,11 @@ object PartyTower {
         val idx = selectedTower.coerceIn(towers.indices)
         listener = target
         app = ctx.applicationContext
+        val nextName = name.trim().take(20).ifBlank { "Friend" }
         if (base == ROOM_BASE + clean && towerIndex == idx && client != null) {
+            // Retained live session reuse ho sakti hai, lekin display identity stale nahi honi chahiye.
+            myName = nextName
+            myColor = colors[(myName.lowercase().hashCode() and Int.MAX_VALUE) % colors.size]
             emitSnapshot()
             if (connected) publishPresence()
             return
@@ -268,7 +272,7 @@ object PartyTower {
         roomName = clean
         base = ROOM_BASE + clean
         towerIndex = idx
-        myName = name.trim().take(20).ifBlank { "Friend" }
+        myName = nextName
         myColor = colors[(myName.lowercase().hashCode() and Int.MAX_VALUE) % colors.size]
         val prefs = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val sk = sessionKey()

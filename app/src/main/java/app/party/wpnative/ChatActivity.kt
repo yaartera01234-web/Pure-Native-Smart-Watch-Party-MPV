@@ -77,6 +77,7 @@ class ChatActivity : Activity(), ChatHost {
     private var animId = -1          // jis nay message ko abhi entry animation milti hai
     private var emojiTarget: Msg? = null   // ➕ se jis message pe emoji lagana hai
     private var typingOn = false     // kya doosra wala abhi likh raha hai (Instagram wale dots)
+    private var typingPeerName = ""  // typing document ka actual live display name
 
     // DEMO: jab tak asli server nahi aata, peer ki typing dikhane ke liye.
     // Firebase live ho jaye to ye apne aap band (asli typing signal chalega).
@@ -89,6 +90,7 @@ class ChatActivity : Activity(), ChatHost {
     private var msgListener: ListenerRegistration? = null
     private var presenceListener: ListenerRegistration? = null
     private var typingListener: ListenerRegistration? = null
+    private var profileListener: ListenerRegistration? = null
     private var loadingOlder = false
     private var hasMoreOlder = true
     private var pruning = false
@@ -123,6 +125,7 @@ class ChatActivity : Activity(), ChatHost {
     private lateinit var emojiInput: EditText
     private lateinit var statusText: TextView     // header ka "Online" / "Offline • 12 min ago"
     private lateinit var statusDotWrap: FrameLayout
+    private lateinit var peerNameText: TextView
     private lateinit var headerAvatarHost: FrameLayout
     private var chatVisible = false
 
@@ -164,11 +167,11 @@ class ChatActivity : Activity(), ChatHost {
         renderThread()
         scrollBottom()
 
-        // Friend Code directory se usi user ki selected original DP taaza karo.
-        if (peerCode.length == 8) FirebaseChat.findFriendProfile(this, peerCode) { profile ->
-            if (profile != null && !isFinishing) {
-                refreshHeaderAvatar()
-                if (::ad.isInitialized) ad.notifyDataSetChanged()
+        // Stable Friend Code profile live suno: doosra user naam/DP badle to open DM bhi
+        // foran latest identity dikhaye; conversation ID aur history wahi rehti hai.
+        if (peerCode.length == 8) {
+            profileListener = FirebaseChat.listenFriendProfile(this, peerCode) { profile ->
+                if (profile != null && !isFinishing) applyPeerProfile(profile)
             }
         }
 
@@ -206,6 +209,7 @@ class ChatActivity : Activity(), ChatHost {
         msgListener?.remove(); msgListener = null
         presenceListener?.remove(); presenceListener = null
         typingListener?.remove(); typingListener = null
+        profileListener?.remove(); profileListener = null
         super.onDestroy()
     }
 
@@ -313,13 +317,14 @@ class ChatActivity : Activity(), ChatHost {
 
         // Naam + sub
         val title = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        title.addView(TextView(this).apply {
+        peerNameText = TextView(this).apply {
             text = peer
             textSize = 13.5f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.WHITE)
             setSingleLine(true)
-        })
+        }
+        title.addView(peerNameText)
         // Online / Offline: website .dm-bar .dot4 (8dp gola) + label ("Offline • 12 min ago")
         val subRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -361,6 +366,18 @@ class ChatActivity : Activity(), ChatHost {
         headerAvatarHost.removeAllViews()
         headerAvatarHost.addView(DpStore.circle(this, peer, peerColor, 34),
             FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER))
+    }
+
+    private fun applyPeerProfile(profile: FriendProfile) {
+        val oldName = peer
+        Friends.updateNameByCode(this, profile.code, profile.name)
+        peer = profile.name
+        peerColor = try { Color.parseColor(profile.color) } catch (_: Throwable) { pickColor(peer) }
+        if (::peerNameText.isInitialized) peerNameText.text = peer
+        refreshHeaderAvatar()
+        if (chatVisible) WpActive.peer = peer
+        if (!oldName.equals(peer, ignoreCase = false)) watchPeerPresence()
+        if (::ad.isInitialized) ad.notifyDataSetChanged()
     }
 
     /** Header ka vector-icon wala gol button (call) — website .add2 jaisa. */
@@ -776,12 +793,21 @@ class ChatActivity : Activity(), ChatHost {
             startLiveListener()
         }
 
-        presenceListener = FirebaseChat.listenPresence(this, peer) { online, seenAt ->
-            Presence.setState(this, peer, online, seenAt)
-            refreshStatus()
-        }
+        watchPeerPresence()
 
-        typingListener = FirebaseChat.listenTyping(this, chatId, me) { on -> setTyping(on) }
+        typingListener = FirebaseChat.listenTyping(this, chatId, me) { who ->
+            typingPeerName = who.orEmpty()
+            setTyping(who != null)
+        }
+    }
+
+    private fun watchPeerPresence() {
+        presenceListener?.remove()
+        val watchedName = peer
+        presenceListener = FirebaseChat.listenPresence(this, watchedName) { online, seenAt ->
+            Presence.setState(this, watchedName, online, seenAt)
+            if (peer == watchedName) refreshStatus()
+        }
     }
 
     /**
@@ -1500,6 +1526,10 @@ class ChatActivity : Activity(), ChatHost {
     override fun peerName(): String = peer
     override fun meName(): String = me
     override fun peerColorInt(): Int = peerColor
+    // Code-backed DM mein latest profile name poori conversation par authoritative hai.
+    override fun messageName(m: Msg): String = if (m.own) "You" else peer
+    override fun typingName(): String = typingPeerName.ifBlank { peer }
+    override fun typingAvatarName(): String = typingPeerName.ifBlank { peer }
     override fun tick(m: Msg): CharSequence = timeWithTick(m)
     override fun bubbleMaxWidth(): Int =
         Math.max(dp(120), (resources.displayMetrics.widthPixels * 0.85f).toInt() - dp(70))

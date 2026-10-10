@@ -14,6 +14,7 @@ import java.security.SecureRandom
 object WpUser {
     private const val PREF = "wp_user"
     private const val KEY_NAME = "name"
+    private const val KEY_PUBLISHED_NAME = "published_name"
     private const val KEY_CODE = "friend_code"
     private const val CODE_PREFIX = "WP1"
     private const val CODE_LEN = 8
@@ -32,6 +33,17 @@ object WpUser {
 
     fun savedName(ctx: Context): String =
         ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(KEY_NAME, "") ?: ""
+
+    /** Directory/presence par aakhri successfully publish hua naam. */
+    fun publishedName(ctx: Context): String =
+        ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getString(KEY_PUBLISHED_NAME, "")?.trim().orEmpty()
+
+    fun markNamePublished(ctx: Context, name: String) {
+        val clean = name.trim().take(40)
+        if (clean.isNotBlank()) ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit().putString(KEY_PUBLISHED_NAME, clean).apply()
+    }
 
     /** Is handset ka stable, shareable code: WP1-XXXX-XXXX. */
     fun friendCode(ctx: Context): String = formatFriendCode(friendCodeRaw(ctx))

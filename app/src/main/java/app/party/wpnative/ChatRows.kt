@@ -25,6 +25,7 @@ class Msg(
     var wave: String = "",       // voice: har 100ms ki awaaz
     var senderName: String = "", // Party Room mein har member ka apna naam
     var senderColor: Int = 0,     // Party Room member/avatar accent
+    var senderId: String = "",   // stable Room member identity; rename par rows live update
     val rxCounts: LinkedHashMap<String, Int> = LinkedHashMap(),
     val reactionActors: LinkedHashMap<String, String> = LinkedHashMap(),
     var mediaUrl: String = ""     // keyboard GIF ka shareable HTTPS source (agar mila)

@@ -41,6 +41,8 @@ interface ChatHost {
         else m.senderColor.takeIf { it != 0 } ?: peerColorInt()
     /** Typing row ka live naam. DM mein peer; Room mein actual typing member(s). */
     fun typingName(): String = peerName()
+    /** Multiple Room typers mein avatar pehle actual member ka hota hai. */
+    fun typingAvatarName(): String = typingName().substringBefore(',').trim().ifBlank { peerName() }
     /** Party Room website geometry; DM ka approved 22dp look alag hi rehta hai. */
     fun originalPartyChat(): Boolean = false
     fun tick(m: Msg): CharSequence
@@ -837,14 +839,26 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
 
     private class TypingVH(private val host: ChatHost) : RecyclerView.ViewHolder(build(host)) {
         private val row = itemView as LinearLayout
-        private val avatar = row.getChildAt(0) as TextView
+        private val avatarHost = row.getChildAt(0) as FrameLayout
         private val nameTv = (row.getChildAt(1) as LinearLayout).getChildAt(0) as TextView
+        private var avatarSig = ""
 
-        /** Recycler hone par bhi Room ka abhi wala actual member naam lagao; "Party" kabhi nahi. */
+        /** Recycler hone par bhi actual live member ka naam aur selected DP lagao. */
         fun bind() {
             val name = host.typingName().trim().ifBlank { host.peerName() }
-            avatar.text = name.firstOrNull()?.uppercase() ?: "?"
+            val avatarName = host.typingAvatarName().trim().ifBlank { name }
             nameTv.text = name
+            val sig = "$avatarName|${DpStore.revision(avatarName)}"
+            if (sig != avatarSig) {
+                avatarSig = sig
+                avatarHost.removeAllViews()
+                avatarHost.addView(
+                    DpStore.circle(host.ctx(), avatarName, host.peerColorInt(), 34),
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                )
+            }
         }
 
         companion object {
@@ -855,17 +869,8 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                     layoutParams = RecyclerView.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 }
-                row.addView(TextView(host.ctx()).apply {
-                    text = "?"
-                    textSize = 13f
-                    gravity = Gravity.CENTER
-                    setTypeface(typeface, Typeface.BOLD)
-                    setTextColor(Color.WHITE)
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
-                        setColor(host.peerColorInt())
-                    }
-                }, LinearLayout.LayoutParams(host.dp(34), host.dp(34)))
+                row.addView(FrameLayout(host.ctx()),
+                    LinearLayout.LayoutParams(host.dp(34), host.dp(34)))
 
                 val col = LinearLayout(host.ctx()).apply { orientation = LinearLayout.VERTICAL }
                 col.addView(TextView(host.ctx()).apply {

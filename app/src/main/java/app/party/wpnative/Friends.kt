@@ -104,6 +104,29 @@ object Friends {
         return readCodes(ctx).optString(raw).takeIf { it.isNotBlank() }
     }
 
+    /**
+     * Stable Friend Code ki display-name mapping ko profile directory ke latest naam par lao.
+     * List position bachti hai, duplicate purana naam nikalta hai aur code-backed chat ID nahi
+     * badalti. Return value purana naam hai; null ka matlab code friend list mein nahi tha.
+     */
+    fun updateNameByCode(ctx: Context, code: String, newName: String): String? {
+        val raw = WpUser.normalizeFriendCode(code)
+        val next = newName.trim().take(40)
+        if (raw.length != 8 || next.isBlank()) return null
+        val codes = readCodes(ctx)
+        val old = codes.optString(raw).trim()
+        if (old.isBlank()) return null
+        if (old == next) return old
+
+        val names = all(ctx).toMutableList()
+        val oldIndex = names.indexOfFirst { it.equals(old, ignoreCase = true) }
+        names.removeAll { it.equals(old, ignoreCase = true) || it.equals(next, ignoreCase = true) }
+        names.add(oldIndex.coerceIn(0, names.size), next)
+        codes.put(raw, next)
+        save(ctx, names, codes)
+        return old
+    }
+
     private fun readCodes(ctx: Context): JSONObject {
         val raw = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .getString(KEY_CODES, "{}") ?: "{}"

@@ -108,9 +108,27 @@ class InboxActivity : Activity() {
 
     private fun refreshFriendAvatars() {
         Friends.entries(this).filter { it.code.length == 8 }.forEach { friend ->
+            // Set sirf in-flight lookup ko dedupe karta hai; har onResume latest name/DP leta hai.
             if (!avatarLookups.add(friend.code)) return@forEach
             FirebaseChat.findFriendProfile(this, friend.code) { profile ->
-                if (profile != null && !isFinishing && ::listBox.isInitialized) fillInbox()
+                avatarLookups.remove(friend.code)
+                if (profile != null && !isFinishing) {
+                    val oldName = Friends.updateNameByCode(this, profile.code, profile.name)
+                    if (oldName != null && !oldName.equals(profile.name, ignoreCase = false)) {
+                        val i = chats.indexOfFirst {
+                            it.code == profile.code || it.name.equals(oldName, ignoreCase = true)
+                        }
+                        if (i >= 0) chats[i] = chats[i].copy(
+                            name = profile.name,
+                            color = colorFor(profile.name),
+                            code = profile.code
+                        )
+                    }
+                    if (::listBox.isInitialized) {
+                        listSig = listSignature()
+                        fillInbox()
+                    }
+                }
             }
         }
     }

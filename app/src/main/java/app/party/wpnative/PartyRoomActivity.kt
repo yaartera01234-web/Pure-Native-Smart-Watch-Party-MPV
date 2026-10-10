@@ -1362,7 +1362,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     }
 
     private fun partySig(m: Msg): String =
-        m.fid + "|" + m.senderName + "|" + m.senderColor + "|" + m.text + "|" +
+        m.fid + "|" + m.senderId + "|" + m.senderName + "|" + m.senderColor + "|" + m.text + "|" +
             m.replyName + "|" + m.replyText + "|" + m.replyMid + "|" + m.time + "|" + m.type + "|" + m.mediaKey + "|" +
             m.mediaUrl + "|" + (m.mediaKey.isNotBlank() && MediaCache.has(this, m.mediaKey)) + "|" +
             m.rx.entries.joinToString(",") { "${it.key}:${it.value}:${m.rxCounts[it.key] ?: 1}" }
@@ -1738,8 +1738,21 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         if (::partyOnlineText.isInitialized) partyOnlineText.text =
             if (partyTowerUp) "●  $partyMemberCount online" else "📻 Reconnect…"
         renderPartyMembers(visible)
-        // Presence payload DP register karta hai; already-visible message rows bhi rebind hon.
-        if (::partyAdapter.isInitialized) partyAdapter.notifyDataSetChanged()
+        // Stable member id se purane visible Room bubbles bhi latest display name/color lein.
+        val byId = visible.associateBy { it.id }
+        var identityChanged = false
+        partyMsgs.forEach { msg ->
+            val member = byId[msg.senderId] ?: return@forEach
+            if (msg.senderName != member.name || msg.senderColor != member.color) {
+                msg.senderName = member.name
+                msg.senderColor = member.color
+                identityChanged = true
+            }
+        }
+        // Presence payload DP register karta hai; already-visible message/typing rows rebind hon.
+        if (::partyAdapter.isInitialized) {
+            if (identityChanged) renderPartyThread() else partyAdapter.notifyDataSetChanged()
+        }
     }
 
     private fun renderPartyMembers(list: List<PartyMember>) {
@@ -1776,7 +1789,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             mediaKey = if (message.type == "text") "" else "party_${message.mid}",
             mediaUrl = message.mediaUrl,
             dur = message.dur, wave = message.wave,
-            senderName = message.name, senderColor = message.color
+            senderName = message.name, senderColor = message.color, senderId = message.senderId
         )
         partyMsgs.add(m)
         partyMsgs.sortBy { it.ts }
@@ -1857,6 +1870,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     override fun ctx(): Context = this
     override fun peerName(): String = "Party"
     override fun typingName(): String = partyTypingNames.joinToString(", ").ifBlank { peerName() }
+    override fun typingAvatarName(): String = partyTypingNames.firstOrNull().orEmpty().ifBlank { peerName() }
     override fun meName(): String = WpUser.me(this)
     override fun peerColorInt(): Int = palette.accent[2]
     override fun originalPartyChat(): Boolean = true
