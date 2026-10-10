@@ -10,6 +10,8 @@ Ab shamil hai:
 - Native Party Room UI aur Rave-size full-width `16:9` MPV player
 - EMQX, HiveMQ aur tyckr ke exact WSS endpoints par encrypted native MQTT Room transport
 - Live Room members, reconnect-safe presence aur explicit confirmed Leave
+- Aesthetic `Ahmed Joined` / `Ahmed Left` Room system rows plus fullscreen membership activity cards
+- Smart Music source-derived Room tones: exact sine/envelope sequence for remote join, leave and each incoming live message; retained history and broker echoes stay silent
 - Room text/reply/reactions/photo/voice; media tower par AES-GCM encrypted retained blobs
 - Explicit Leave par us phone ki Room chat/media cache saaf; Room khaali hone ke baad bhi shared playback/media state retained rehti hai
 - `WP1-XXXX-XXXX` Friend Codes: own-code Copy/Share, lookup, requests, Accept/Reject aur stable code-backed DM chats

@@ -54,6 +54,15 @@ data class PartyMessage(
     val mediaUrl: String = ""
 )
 
+/** A live, non-retained Room membership event. [eventId] is the wire `mid`. */
+data class PartyMembershipEvent(
+    val eventId: String,
+    val memberId: String,
+    val name: String,
+    val kind: String,
+    val ts: Long
+)
+
 /** Website-compatible retained playback state and transient command payloads. */
 data class PartyPlaybackMedia(
     val type: String,
@@ -137,6 +146,10 @@ interface PartyTowerListener {
     fun onPartyTowerStatus(connected: Boolean, label: String)
     fun onPartyMembers(members: List<PartyMember>)
     fun onPartyMessage(message: PartyMessage)
+    /** Exactly-once foreground delivery: never a retained-history replay or broker echo. */
+    fun onPartyLiveMessage(message: PartyMessage) {}
+    /** Remote join/explicit-leave after wire-id and 45-second semantic deduplication. */
+    fun onPartyMembershipEvent(event: PartyMembershipEvent) {}
     fun onPartyMessageRemoved(mid: String)
     fun onPartyMedia(mid: String, bytes: ByteArray)
     fun onPartyReactions(mid: String, values: Map<String, Pair<Int, Boolean>>)
@@ -192,13 +205,17 @@ object PartyTower {
     private var connected = false
     private var joining = false
     private var explicitLeaving = false
+    private var joinEventPublished = false
     private var visibleAfter = 0L
 
     private val members = java.util.concurrent.ConcurrentHashMap<String, PartyMember>()
     private val typingUsers = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+    private val seenMembershipEventIds = LinkedHashSet<String>()
+    private val recentMembershipEvents = LinkedHashMap<String, Long>()
     private var lastTypingSentAt = 0L
     private val messages = java.util.concurrent.ConcurrentHashMap<String, PartyMessage>()
     private val messageJson = java.util.concurrent.ConcurrentHashMap<String, JSONObject>()
+    private val liveMessageNotified = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val encryptedBlobs = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
     private val deliveredMedia = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val reactions = HashMap<String, LinkedHashMap<String, LinkedHashSet<String>>>()
@@ -319,7 +336,12 @@ object PartyTower {
                 subscribeAll()
                 clearPendingExplicitLeave()
                 publishPresence()
-                publishEvent("join")
+                // Automatic MQTT reconnect is not a new Room entry. The website also
+                // publishes Joined only from its explicit wpRoomEnter action.
+                if (!joinEventPublished) {
+                    publishEvent("join")
+                    joinEventPublished = true
+                }
                 main.removeCallbacks(presenceBeat)
                 main.removeCallbacks(memberSweep)
                 main.post(presenceBeat)
@@ -384,6 +406,7 @@ object PartyTower {
     private fun publishEvent(type: String) {
         val body = JSONObject().apply {
             put("t", type); put("name", myName); put("from", memberId); put("mid", randomId())
+            put("ts", System.currentTimeMillis())
         }
         publish("$base/events", body.toString().toByteArray(), false)
     }
@@ -426,8 +449,14 @@ object PartyTower {
             mediaUrl = if (type == "gif") mediaUrl.takeIf { it.startsWith("https://") }.orEmpty() else ""
         )
         messages[mid] = local
+        liveMessageNotified.add(mid)
         trimRetainedIfNeeded()
-        main.post { listener?.onPartyMessage(local) }
+        main.post {
+            listener?.let {
+                it.onPartyMessage(local)
+                it.onPartyLiveMessage(local)
+            }
+        }
 
         io.execute {
             try {
@@ -504,7 +533,7 @@ object PartyTower {
         if (blob.isNotBlank()) publish("$base/chat/blob/$blob", ByteArray(0), true)
         val ev = JSONObject().apply { put("t", "purge"); put("mid", mid); put("id", randomId()) }
         publish("$base/events", ev.toString().toByteArray(), false)
-        messages.remove(mid); messageJson.remove(mid); deliveredMedia.remove(mid)
+        messages.remove(mid); messageJson.remove(mid); deliveredMedia.remove(mid); liveMessageNotified.remove(mid)
         main.post { listener?.onPartyMessageRemoved(mid) }
     }
 
@@ -759,8 +788,8 @@ object PartyTower {
             topic.startsWith("$base/members/") -> handleMember(topic.substringAfterLast('/'), payload, retained)
             topic.startsWith("$base/typing/") -> handleTyping(topic.substringAfterLast('/'), payload)
             topic.startsWith("$base/chat/blob/") -> handleBlob(topic.substringAfterLast('/'), payload)
-            topic.startsWith("$base/chat/msg/") -> handleRetainedMessage(topic.substringAfterLast('/'), payload)
-            topic == "$base/chat" -> if (payload.isNotEmpty()) handleMessageEnvelope(payload)
+            topic.startsWith("$base/chat/msg/") -> handleRetainedMessage(topic.substringAfterLast('/'), payload, retained)
+            topic == "$base/chat" -> if (payload.isNotEmpty()) handleMessageEnvelope(payload, live = true)
             topic == "$base/react" -> if (payload.isNotEmpty()) handleReaction(payload)
             topic == "$base/events" -> if (payload.isNotEmpty()) handleEvent(payload)
             topic == "$base/queue" -> handleQueue(payload)
@@ -771,8 +800,18 @@ object PartyTower {
 
     private fun handleMember(id: String, payload: ByteArray, retained: Boolean) {
         if (payload.isEmpty()) {
-            members.remove(id)
+            val departed = members.remove(id)
             if (typingUsers.remove(id) != null) emitTyping()
+            // A live retained tombstone is the website's explicit Leave fallback. If
+            // /events arrived first, it already removed the member and this is silent.
+            if (departed != null && id != memberId) {
+                emitMembershipEvent(
+                    kind = "leave",
+                    id = id,
+                    name = departed.name,
+                    eventId = "presence-leave-$id-${System.currentTimeMillis()}"
+                )
+            }
         } else {
             val o = JSONObject(String(payload, StandardCharsets.UTF_8))
             val now = System.currentTimeMillis()
@@ -813,20 +852,32 @@ object PartyTower {
         if (typingUsers.isNotEmpty()) main.postDelayed(typingSweep, 1_000L)
     }
 
-    private fun handleRetainedMessage(mid: String, payload: ByteArray) {
+    private fun handleRetainedMessage(mid: String, payload: ByteArray, retained: Boolean) {
         if (payload.isEmpty()) {
-            messages.remove(mid); messageJson.remove(mid); deliveredMedia.remove(mid)
+            messages.remove(mid); messageJson.remove(mid); deliveredMedia.remove(mid); liveMessageNotified.remove(mid)
             main.post { listener?.onPartyMessageRemoved(mid) }
-        } else handleMessageEnvelope(payload)
+        } else {
+            // MQTT sets retained=true only while replaying stored history to a new
+            // subscription. A newly published retained row reaches existing peers with
+            // retained=false and is still a live message if it wins the topic race.
+            handleMessageEnvelope(payload, live = !retained)
+        }
     }
 
-    private fun handleMessageEnvelope(payload: ByteArray) {
+    private fun handleMessageEnvelope(payload: ByteArray, live: Boolean) {
         val plain = decryptJson(JSONObject(String(payload, StandardCharsets.UTF_8))) ?: return
         val m = parseMessage(plain)
         messageJson[m.mid] = plain
         val fresh = messages.put(m.mid, m) == null
         trimRetainedIfNeeded()
-        if (fresh && m.ts > visibleAfter) main.post { listener?.onPartyMessage(m) }
+        val visible = m.ts > visibleAfter
+        val notifyLive = visible && live && liveMessageNotified.add(m.mid)
+        if ((fresh && visible) || notifyLive) main.post {
+            listener?.let {
+                if (fresh && visible) it.onPartyMessage(m)
+                if (notifyLive) it.onPartyLiveMessage(m)
+            }
+        }
         tryDeliverMedia(m)
         emitReaction(m.mid)
     }
@@ -921,21 +972,63 @@ object PartyTower {
 
     private fun handleEvent(payload: ByteArray) {
         val o = JSONObject(String(payload, StandardCharsets.UTF_8))
-        when (o.optString("t")) {
+        when (val kind = o.optString("t")) {
+            "join" -> {
+                val id = o.optString("from")
+                val latestName = members[id]?.name ?: o.optString("name", "Friend")
+                emitMembershipEvent(kind, id, latestName, membershipEventId(o, payload))
+            }
             "leave" -> {
                 val id = o.optString("from")
+                // Capture the latest presence name before deleting the member row; the
+                // event payload remains a compatibility fallback for website peers.
+                val latestName = members[id]?.name ?: o.optString("name", "Friend")
                 members.remove(id)
                 if (typingUsers.remove(id) != null) emitTyping()
                 emitMembers()
+                emitMembershipEvent(kind, id, latestName, membershipEventId(o, payload))
             }
             "purge" -> {
                 val mid = o.optString("mid")
                 if (mid.isNotBlank()) {
-                    messages.remove(mid); messageJson.remove(mid); deliveredMedia.remove(mid)
+                    messages.remove(mid); messageJson.remove(mid); deliveredMedia.remove(mid); liveMessageNotified.remove(mid)
                     main.post { listener?.onPartyMessageRemoved(mid) }
                 }
             }
         }
+    }
+
+    private fun membershipEventId(o: JSONObject, payload: ByteArray): String =
+        o.optString("mid").ifBlank {
+            "legacy-" + Integer.toUnsignedString(String(payload, StandardCharsets.UTF_8).hashCode(), 36)
+        }
+
+    /** Match party-final1.html's 45-second join/left suppression, but key by stable ID. */
+    private fun emitMembershipEvent(kind: String, id: String, name: String, eventId: String) {
+        if (kind !in setOf("join", "leave") || id.isBlank() || id == memberId) return
+        val now = System.currentTimeMillis()
+        synchronized(seenMembershipEventIds) {
+            if (!seenMembershipEventIds.add(eventId)) return
+            while (seenMembershipEventIds.size > 300) {
+                val first = seenMembershipEventIds.firstOrNull() ?: break
+                seenMembershipEventIds.remove(first)
+            }
+        }
+        val semanticKey = "$kind|$id"
+        synchronized(recentMembershipEvents) {
+            val previous = recentMembershipEvents[semanticKey] ?: 0L
+            if (now - previous < 45_000L) return
+            recentMembershipEvents[semanticKey] = now
+            recentMembershipEvents.entries.removeAll { now - it.value > 90_000L }
+        }
+        val event = PartyMembershipEvent(
+            eventId = eventId,
+            memberId = id,
+            name = name.trim().take(20).ifBlank { "Friend" },
+            kind = kind,
+            ts = now
+        )
+        main.post { listener?.onPartyMembershipEvent(event) }
     }
 
     private fun handleQueue(payload: ByteArray) {
@@ -1029,7 +1122,7 @@ object PartyTower {
         if (messages.size <= KEEP) return
         val old = messages.values.sortedBy { it.ts }.take(messages.size - KEEP)
         old.forEach { m ->
-            messages.remove(m.mid); messageJson.remove(m.mid)
+            messages.remove(m.mid); messageJson.remove(m.mid); liveMessageNotified.remove(m.mid)
             if (connected) {
                 publish("$base/chat/msg/${m.mid}", ByteArray(0), true)
                 val blob = m.mediaRef.removePrefix("mqtt:")
@@ -1092,8 +1185,10 @@ object PartyTower {
     }
 
     private fun resetTransient() {
-        members.clear(); typingUsers.clear(); lastTypingSentAt = 0L
-        messages.clear(); messageJson.clear(); encryptedBlobs.clear()
+        members.clear(); typingUsers.clear(); lastTypingSentAt = 0L; joinEventPublished = false
+        synchronized(seenMembershipEventIds) { seenMembershipEventIds.clear() }
+        synchronized(recentMembershipEvents) { recentMembershipEvents.clear() }
+        messages.clear(); messageJson.clear(); liveMessageNotified.clear(); encryptedBlobs.clear()
         deliveredMedia.clear(); synchronized(reactions) { reactions.clear() }; queue.clear(); queueIndex = -1
         synchronized(playbackLock) {
             playbackState = null; playbackCheckpoint = null; lastPlaybackPayload = ""

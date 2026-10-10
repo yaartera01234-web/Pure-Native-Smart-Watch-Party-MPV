@@ -37,6 +37,7 @@ class Msg(
  *  - DAY    : "Aaj" / "Kal" wala sar-nama
  *  - TYPING : doosre wale ke Instagram-jaise 3 dots
  *  - EMPTY  : khaali chat wali state
+ *  - SYSTEM : Party Room ka centered Joined / Left event pill
  *
  * `key`  = DiffUtil ko batata hai ke kaun si line wahi purani hai
  * `sig`  = andar ka maal badla (text / ✓✓ / reaction / reply) to diff pakad leta hai
@@ -53,5 +54,6 @@ class Row(
         const val DAY = 1
         const val TYPING = 2
         const val EMPTY = 3
+        const val SYSTEM = 4
     }
 }

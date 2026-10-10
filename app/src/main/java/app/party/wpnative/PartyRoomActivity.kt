@@ -111,8 +111,10 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     private lateinit var roomBackdrop: PartyRoomBackdrop
     private val palette: WpTheme get() = palettes[themeIndex]
 
-    // Party chat filhaal isi live Room ki local UI state hai; network transport baad mein judega.
+    // Live Room chat plus transient, non-user membership rows for this Room session.
     private val partyMsgs = mutableListOf<Msg>()
+    private val partyMembershipEvents = mutableListOf<PartyMembershipEvent>()
+    private val roomTunes = RoomEventTunes()
     private var nextPartyMsgId = 1
     private var partyReplyTo: Msg? = null
     private var partyEmojiTarget: Msg? = null
@@ -331,6 +333,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         PartyPlayerService.stop(applicationContext)
         mpvVideo?.destroy()
         mpvVideo = null
+        roomTunes.stop()
         PartyTower.detach(this)
         VoiceRec.abort()
         PartyRoomRoute.detach(this)
@@ -360,6 +363,8 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         PartyPlayerService.stop(applicationContext)
         partyMsgs.forEach { if (it.mediaKey.startsWith("party_")) MediaCache.delete(this, it.mediaKey) }
         partyMsgs.clear()
+        partyMembershipEvents.clear()
+        roomTunes.stop()
         if (::partyAdapter.isInitialized) renderPartyThread()
         PartyTower.leave {
             MediaCache.deletePrefix(this, "party_")
@@ -1351,9 +1356,26 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     private fun renderPartyThread() {
         if (!::partyAdapter.isInitialized) return
-        val rows = partyMsgs.mapTo(mutableListOf()) { m ->
-            Row(Row.MSG, "party:${m.id}", partySig(m), m, null)
+        // Message and membership events share one chronological Room timeline. System
+        // rows deliberately carry no Msg, so user bubble/reply/reaction gestures cannot attach.
+        val timed = mutableListOf<Triple<Long, String, Row>>()
+        partyMsgs.forEach { m ->
+            timed += Triple(m.ts, "m:${m.fid}",
+                Row(Row.MSG, "party:${m.id}", partySig(m), m, null))
         }
+        partyMembershipEvents.forEach { event ->
+            val word = if (event.kind == "join") "Joined" else "Left"
+            val text = "${event.name} $word"
+            timed += Triple(event.ts, "e:${event.eventId}", Row(
+                Row.SYSTEM,
+                "party:event:${event.eventId}",
+                "${event.kind}|$text",
+                null,
+                text
+            ))
+        }
+        timed.sortWith(compareBy<Triple<Long, String, Row>> { it.first }.thenBy { it.second })
+        val rows = timed.mapTo(mutableListOf()) { it.third }
         // ChatAdapter ka wahi DM typing bubble: avatar + animated three dots.
         if (partyTypingNames.isNotEmpty()) {
             rows += Row(Row.TYPING, "party:typing", partyTypingNames.joinToString("|"), null, null)
@@ -1774,6 +1796,36 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             partyMembersList.addView(chip,
                 lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(25)).apply { rightMargin = dp(5) })
         }
+    }
+
+    override fun onPartyMembershipEvent(event: PartyMembershipEvent) {
+        if (partyMembershipEvents.any { it.eventId == event.eventId }) return
+        partyMembershipEvents += event
+        partyMembershipEvents.sortBy { it.ts }
+        while (partyMembershipEvents.size > 80) partyMembershipEvents.removeAt(0)
+        renderPartyThread()
+        scrollPartyBottom()
+
+        val joined = event.kind == "join"
+        if (joined) roomTunes.joined() else roomTunes.left()
+        showPlayerActivity(event.name, event.kind, if (joined) "Joined" else "Left", "")
+    }
+
+    /**
+     * Live-only callback from PartyTower. Retained restoration and both MQTT echoes never
+     * enter here. The authoritative page rings only for a friend's message (`!own`), while
+     * its fullscreen feed shows both own and remote Room messages.
+     */
+    override fun onPartyLiveMessage(message: PartyMessage) {
+        val own = message.senderId == PartyTower.currentMemberId()
+        if (!own) roomTunes.message()
+        val detail = when (message.type) {
+            "photo" -> "🖼️ Photo"
+            "voice" -> "🎙️ Voice note"
+            "gif" -> "GIF"
+            else -> message.text
+        }
+        if (detail.isNotBlank()) showPlayerActivity(message.name, "msg", "", detail)
     }
 
     override fun onPartyMessage(message: PartyMessage) {

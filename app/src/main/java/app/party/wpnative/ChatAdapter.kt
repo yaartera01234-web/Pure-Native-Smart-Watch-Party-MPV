@@ -95,6 +95,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         const val T_DAY = 3
         const val T_TYPING = 4
         const val T_EMPTY = 5
+        const val T_SYSTEM = 6
     }
 
     /** Nayi list do — DiffUtil sirf farq wali lines update karta hai. */
@@ -120,6 +121,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         }
         Row.DAY -> T_DAY
         Row.TYPING -> T_TYPING
+        Row.SYSTEM -> T_SYSTEM
         else -> T_EMPTY
     }
 
@@ -130,6 +132,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             T_CALL -> CallSummaryVH(host)
             T_DAY -> DayVH(host)
             T_TYPING -> TypingVH(host)
+            T_SYSTEM -> RoomSystemVH(host)
             else -> EmptyVH(host)
         }
 
@@ -144,6 +147,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             is CallSummaryVH -> rows[pos].msg?.let(h::bind)
             is DayVH -> h.bind(rows[pos].day ?: "")
             is TypingVH -> h.bind()
+            is RoomSystemVH -> h.bind(rows[pos].day.orEmpty(), rows[pos].sig.substringBefore('|'))
         }
     }
 
@@ -818,6 +822,63 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                     ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = host.dp(10) })
                 root.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                return root
+            }
+        }
+    }
+
+    // ------------------------------------------------------- Room join / leave system row
+
+    /** Centered, non-user event pill: no avatar, bubble gestures, reply, or reactions. */
+    private class RoomSystemVH(private val host: ChatHost) : RecyclerView.ViewHolder(build(host)) {
+        private val card = (itemView as FrameLayout).getChildAt(0) as LinearLayout
+        private val icon = card.getChildAt(0) as TextView
+        private val label = card.getChildAt(1) as TextView
+
+        fun bind(text: String, kind: String) {
+            val joined = kind == "join"
+            icon.text = if (joined) "🎉" else "👋"
+            label.text = text
+            label.setTextColor(if (joined) host.hex("#fce7f3") else host.hex("#ffe4e6"))
+            card.background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                if (joined) intArrayOf(Color.argb(54, 255, 94, 188), Color.argb(46, 139, 114, 255))
+                else intArrayOf(Color.argb(54, 255, 107, 107), Color.argb(46, 255, 94, 188))
+            ).apply {
+                cornerRadius = host.dp(20).toFloat()
+                setStroke(host.dp(1), if (joined) Color.argb(92, 216, 180, 254)
+                    else Color.argb(92, 253, 164, 175))
+            }
+        }
+
+        companion object {
+            private fun build(host: ChatHost): View {
+                val root = FrameLayout(host.ctx()).apply {
+                    setPadding(host.dp(16), host.dp(4), host.dp(16), host.dp(5))
+                    layoutParams = RecyclerView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                }
+                val card = LinearLayout(host.ctx()).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(host.dp(12), host.dp(6), host.dp(14), host.dp(6))
+                }
+                card.addView(TextView(host.ctx()).apply {
+                    textSize = 13f
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                }, LinearLayout.LayoutParams(host.dp(22), host.dp(22)))
+                card.addView(TextView(host.ctx()).apply {
+                    textSize = 12f
+                    setTypeface(typeface, Typeface.BOLD)
+                    includeFontPadding = false
+                    setSingleLine(true)
+                }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { leftMargin = host.dp(6) })
+                root.addView(card, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER))
                 return root
             }
         }
