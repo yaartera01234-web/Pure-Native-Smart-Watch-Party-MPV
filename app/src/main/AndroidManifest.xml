@@ -29,16 +29,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Inbox app ke andar ka screen hai, doosra launcher app nahi. -->
         <activity
             android:name=".InboxActivity"
-            android:exported="true"
-            android:label="@string/messages_launcher_name"
-            android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".CallsActivity"
             android:exported="false"
