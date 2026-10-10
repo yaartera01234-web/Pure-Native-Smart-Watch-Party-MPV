@@ -44,6 +44,7 @@ class InboxActivity : Activity() {
     private val incomingRequests = mutableListOf<FriendRequest>()
     private var requestListener: ListenerRegistration? = null
     private var searchQuery = ""
+    private val avatarLookups = HashSet<String>()
 
     private lateinit var listBox: LinearLayout
 
@@ -85,11 +86,21 @@ class InboxActivity : Activity() {
         super.onResume()
         CallMiniBar.attach(this)
         FirebaseChat.publishFriendProfile(this)
+        refreshFriendAvatars()
         // Chat screen se koi friend remove hua ho to list turant saaf ho jaye —
         // magar kuch na badla ho to bekaar dobara mat banao (tab badalte waqt jhatka na ho)
         if (::listBox.isInitialized && listSignature() != listSig) {
             listSig = listSignature()
             fillInbox()
+        }
+    }
+
+    private fun refreshFriendAvatars() {
+        Friends.entries(this).filter { it.code.length == 8 }.forEach { friend ->
+            if (!avatarLookups.add(friend.code)) return@forEach
+            FirebaseChat.findFriendProfile(this, friend.code) { profile ->
+                if (profile != null && !isFinishing && ::listBox.isInitialized) fillInbox()
+            }
         }
     }
 
@@ -217,16 +228,10 @@ class InboxActivity : Activity() {
 
         row.setOnLongClickListener { showRowMenu(row, f); true }
 
-        // Avatar (letter) + online dot
+        // Actual Friend Code profile DP + online dot.
         val avatar = FrameLayout(this)
-        avatar.addView(TextView(this).apply {
-            text = f.name.first().toString().uppercase()
-            textSize = 18f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(f.color) }
-        }, FrameLayout.LayoutParams(dp(48), dp(48)))
+        avatar.addView(DpStore.circle(this, f.name, f.color, 48),
+            FrameLayout.LayoutParams(dp(48), dp(48)))
         // Online/Offline ki nishani: website .dm-row .av3 i (13dp gola, 2dp border)
         avatar.clipChildren = false
         row.clipChildren = false
@@ -709,14 +714,7 @@ class InboxActivity : Activity() {
             setPadding(dp(11), dp(11), dp(10), dp(11))
             background = roundBox(Color.argb(25, 139, 114, 255), Color.argb(55, 139, 114, 255), 16, 1)
         }
-        row.addView(TextView(this).apply {
-            text = req.name.firstOrNull()?.uppercase() ?: "?"
-            textSize = 17f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(colorFor(req.name)) }
-        }, lp(dp(44), dp(44)))
+        row.addView(DpStore.circle(this, req.name, colorFor(req.name), 44), lp(dp(44), dp(44)))
 
         val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         info.addView(TextView(this).apply {

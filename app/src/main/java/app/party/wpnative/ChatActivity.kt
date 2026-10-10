@@ -121,6 +121,8 @@ class ChatActivity : Activity(), ChatHost {
     private lateinit var emojiInput: EditText
     private lateinit var statusText: TextView     // header ka "Online" / "Offline • 12 min ago"
     private lateinit var statusDotWrap: FrameLayout
+    private lateinit var headerAvatarHost: FrameLayout
+    private var chatVisible = false
 
     // Website ki tarah har 5 second mein presence taaza karo (dmRefreshOnlineDots ka interval)
     private val statusHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -157,12 +159,21 @@ class ChatActivity : Activity(), ChatHost {
         renderThread()
         scrollBottom()
 
+        // Friend Code directory se usi user ki selected original DP taaza karo.
+        if (peerCode.length == 8) FirebaseChat.findFriendProfile(this, peerCode) { profile ->
+            if (profile != null && !isFinishing) {
+                refreshHeaderAvatar()
+                if (::ad.isInitialized) ad.notifyDataSetChanged()
+            }
+        }
+
         // 2) Firebase: aakhri 20 + naye ka live listener + presence + typing
         startFirebase()
     }
 
     override fun onResume() {
         super.onResume()
+        chatVisible = true
         CallMiniBar.attach(this)
         // Kisi aur screen (inbox) se ye friend hat gaya ho to chat khuli nahi rehni chahiye
         if (!Friends.has(this, peer)) { finish(); return }
@@ -170,9 +181,11 @@ class ChatActivity : Activity(), ChatHost {
         statusHandler.post(statusTick)
         FirebaseChat.setPresence(this, me, true)
         WpActive.peer = peer          // is chat ki notification nahi chahiye
+        markVisibleMessagesRead()
     }
 
     override fun onPause() {
+        chatVisible = false
         VoicePlay.stop()               // screen chhodo to awaaz band
         VoiceRec.abort()               // record chal raha ho to mita do
         if (::recBar.isInitialized) showRecBar(false)
@@ -284,22 +297,14 @@ class ChatActivity : Activity(), ChatHost {
             setOnClickListener { finish(); overridePendingTransition(0, 0) }
         }, lp(dp(28), dp(28)))
 
-        // Avatar (cyan -> purple ring, andar letter)
-        val av = TextView(this).apply {
-            text = peer.first().uppercase()
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(peerColor) }
-        }
-        val ring = FrameLayout(this).apply {
+        // Avatar: Friend Code profile wali actual selected photo/cartoon, cyan-purple ring ke andar.
+        headerAvatarHost = FrameLayout(this).apply {
             setPadding(dp(2), dp(2), dp(2), dp(2))
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
                 intArrayOf(hex("#22d3ee"), hex("#a855f7"))).apply { shape = GradientDrawable.OVAL }
-            addView(av, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER))
         }
-        bar.addView(ring, lp(dp(38), dp(38)).apply { leftMargin = dp(6) })
+        refreshHeaderAvatar()
+        bar.addView(headerAvatarHost, lp(dp(38), dp(38)).apply { leftMargin = dp(6) })
 
         // Naam + sub
         val title = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -344,6 +349,13 @@ class ChatActivity : Activity(), ChatHost {
         wrap.addView(View(this).apply { setBackgroundColor(Color.argb(26, 255, 255, 255)) },
             lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
         return wrap
+    }
+
+    private fun refreshHeaderAvatar() {
+        if (!::headerAvatarHost.isInitialized) return
+        headerAvatarHost.removeAllViews()
+        headerAvatarHost.addView(DpStore.circle(this, peer, peerColor, 34),
+            FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER))
     }
 
     /** Header ka vector-icon wala gol button (call) — website .add2 jaisa. */
@@ -748,6 +760,7 @@ class ChatActivity : Activity(), ChatHost {
                 saveCache()
                 renderThread()
                 scrollBottom()
+                markVisibleMessagesRead(latest)
             }
             // Query fail ho tab bhi live messages band na hon.
             startLiveListener()
@@ -789,13 +802,14 @@ class ChatActivity : Activity(), ChatHost {
             val removed = gone.isNotEmpty() && msgs.removeAll { it.fid in gone }
             // --- naye messages ---
             val before = msgs.size
-            mergeIncoming(list.filterNot { it.deleted }, prepend = false)
+            val changed = mergeIncoming(list.filterNot { it.deleted }, prepend = false)
             val added = msgs.size > before
             if (added) animId = msgs.lastOrNull()?.id ?: -1   // aaya hua message bhi aise hi aaye
-            if (removed || added) {
+            if (removed || added || changed) {
                 saveCache()
                 renderThread()
             }
+            markVisibleMessagesRead(list)
             if (added) scrollBottom()      // naya message aaya to neeche jao
         }
     }
@@ -843,17 +857,47 @@ class ChatActivity : Activity(), ChatHost {
     private fun newestTs(): Long = msgs.maxOfOrNull { it.ts } ?: 0L
     private fun oldestTs(): Long = msgs.minOfOrNull { it.ts } ?: 0L
 
-    /** Firebase se aaye messages ko milao (ek hi message do baar na lage). */
-    private fun mergeIncoming(list: List<ChatMsg>, prepend: Boolean) {
-        val known = msgs.map { it.fid }.toHashSet()
+    /**
+     * Firebase rows milao. Naye documents insert hote hain aur existing sender rows ka
+     * read=false -> true transition bhi merge hota hai, warna blue tick kabhi update nahi hota.
+     */
+    private fun mergeIncoming(list: List<ChatMsg>, prepend: Boolean): Boolean {
+        var changed = false
+        val existing = msgs.filter { it.fid.isNotBlank() }.associateBy { it.fid }
+        list.forEach { remote ->
+            val local = existing[remote.id] ?: return@forEach
+            if (remote.read != local.read) {
+                // Server is authoritative; this also repairs old builds' timer-made blue ticks.
+                local.read = remote.read
+                changed = true
+            }
+        }
+        val known = existing.keys
         val fresh = list.filter {
             !it.deleted && it.id.isNotBlank() && !known.contains(it.id)
         }
-        if (fresh.isEmpty()) return
-        val converted = fresh.map { toMsg(it) }
-        if (prepend) msgs.addAll(0, converted) else msgs.addAll(converted)
-        msgs.sortBy { it.ts }
-        trimToLimit()
+        if (fresh.isNotEmpty()) {
+            val converted = fresh.map { toMsg(it) }
+            if (prepend) msgs.addAll(0, converted) else msgs.addAll(converted)
+            msgs.sortBy { it.ts }
+            trimToLimit()
+            changed = true
+        }
+        return changed
+    }
+
+    /** Sirf foreground mein waqai nazar aaye peer messages server par read hote hain. */
+    private fun markVisibleMessagesRead(server: List<ChatMsg>? = null) {
+        if (!chatVisible || !FirebaseChat.isReady(this)) return
+        val ids = if (server != null) {
+            server.asSequence()
+                .filter { !it.deleted && !it.read && it.from != me && it.type != "call_signal" }
+                .map { it.id }.filter { it.isNotBlank() }.toList()
+        } else {
+            msgs.asSequence().filter { !it.own && !it.read && it.fid.isNotBlank() }
+                .map { it.fid }.toList()
+        }
+        FirebaseChat.markRead(this, chatId, ids)
     }
 
     /** 121waana aate hi sabse purana phone se bhi hatao (RAM/cache/media). */
@@ -1080,8 +1124,9 @@ class ChatActivity : Activity(), ChatHost {
         scrollBottom()
         startLiveListener()
         input.setText("")
-        // Demo: thodi der baad doosri taraf "parh liya" -> ✓✓ neela
-        window.decorView.postDelayed({
+        // Offline demo mein hi fake receipt; real Firebase chat mein blue sirf peer ke
+        // markRead server update se hoga — timer/presence se kabhi nahi.
+        if (!FirebaseChat.isReady(this)) window.decorView.postDelayed({
             if (!isFinishing && msgs.any { it.id == m.id }) { m.read = true; renderThread() }
         }, 900)
         // Demo: peer thodi der typing karta hai (Firebase live ho to asli signal chalega)

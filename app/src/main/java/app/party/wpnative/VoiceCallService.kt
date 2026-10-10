@@ -628,13 +628,15 @@ class VoiceCallService : Service() {
 
     private fun sendSummary(duration: Int, outcome: String) {
         val text = when {
-            duration > 0 -> "📞 Voice call · ${duration / 60}:${(duration % 60).toString().padStart(2, '0')}"
-            outcome == "declined" -> "📵 Voice call declined"
-            outcome == "busy" -> "📞 Voice call · Busy"
-            outcome == "cancelled" -> "📵 Voice call cancelled"
-            else -> "📵 Voice call · No answer"
+            duration > 0 -> "Voice call ended"
+            outcome == "declined" -> "Voice call declined"
+            outcome == "busy" -> "Voice call · Busy"
+            outcome == "cancelled" -> "Voice call cancelled"
+            else -> "Voice call · No answer"
         }
-        FirebaseChat.send(this, chatId, ChatMsg(from = WpUser.me(this), text = text,
+        // Dedicated system type/from: UI is centered without either member's ID/DP and
+        // ordinary composer text can never masquerade as this call-history card.
+        FirebaseChat.send(this, chatId, ChatMsg(from = "Watch Party", text = text,
             ts = System.currentTimeMillis(), type = "call", dur = duration))
     }
 

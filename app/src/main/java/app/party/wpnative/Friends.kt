@@ -69,6 +69,7 @@ object Friends {
         val friendCode = remove.firstOrNull().orEmpty()
         remove.forEach { codes.remove(it) }
         save(ctx, names, codes)
+        DpStore.forget(ctx, name)
 
         // Purani name-based aur nayi code-based dono local caches hatao; remote history
         // remove-friend par nahi mit-ti, bilkul pehle wale DM behavior ki tarah.

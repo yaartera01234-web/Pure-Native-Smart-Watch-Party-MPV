@@ -1638,6 +1638,8 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         if (::partyOnlineText.isInitialized) partyOnlineText.text =
             if (partyTowerUp) "●  $partyMemberCount online" else "📻 Reconnect…"
         renderPartyMembers(visible)
+        // Presence payload DP register karta hai; already-visible message rows bhi rebind hon.
+        if (::partyAdapter.isInitialized) partyAdapter.notifyDataSetChanged()
     }
 
     private fun renderPartyMembers(list: List<PartyMember>) {

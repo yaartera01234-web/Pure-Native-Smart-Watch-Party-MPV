@@ -90,6 +90,8 @@ class MainActivity : Activity() {
         setContentView(buildJoinScreen())
         applyTheme()
         restoreAvatar()
+        // App khulte hi latest selected photo/cartoon Friend Code directory mein publish ho.
+        FirebaseChat.publishFriendProfile(this)
         saveFcmToken()
         BgMsgService.start(this)      // app band hone pe bhi notification
         MediaCleanup.runIfDue(this)   // 3 din purani photo/voice Firestore+phone se hat jayen
@@ -456,7 +458,12 @@ class MainActivity : Activity() {
         avatarType = if (bmp == null) "letter" else type
         avatarData = data
         renderAvatar()
-        if (save) savePrefs()
+        if (save) {
+            savePrefs()
+            // DP badalte hi doston ko purane deterministic cartoon ki jagah nayi asli DP mile.
+            FirebaseChat.publishFriendProfile(this)
+            if (PartyTower.hasLiveSession()) PartyTower.refreshPresence()
+        }
     }
 
     private fun nextAvatarReq(): Int {

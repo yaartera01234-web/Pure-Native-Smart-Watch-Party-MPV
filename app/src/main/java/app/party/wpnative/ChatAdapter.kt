@@ -88,9 +88,10 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
     private companion object {
         const val T_MINE = 0
         const val T_PEER = 1
-        const val T_DAY = 2
-        const val T_TYPING = 3
-        const val T_EMPTY = 4
+        const val T_CALL = 2
+        const val T_DAY = 3
+        const val T_TYPING = 4
+        const val T_EMPTY = 5
     }
 
     /** Nayi list do — DiffUtil sirf farq wali lines update karta hai. */
@@ -109,7 +110,11 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
     override fun getItemCount(): Int = rows.size
 
     override fun getItemViewType(pos: Int): Int = when (rows[pos].kind) {
-        Row.MSG -> if (rows[pos].msg?.own == true) T_MINE else T_PEER
+        Row.MSG -> when {
+            rows[pos].msg?.type == "call" -> T_CALL
+            rows[pos].msg?.own == true -> T_MINE
+            else -> T_PEER
+        }
         Row.DAY -> T_DAY
         Row.TYPING -> T_TYPING
         else -> T_EMPTY
@@ -119,6 +124,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         when (viewType) {
             T_MINE -> MsgVH(host, true)
             T_PEER -> MsgVH(host, false)
+            T_CALL -> CallSummaryVH(host)
             T_DAY -> DayVH(host)
             T_TYPING -> TypingVH(host)
             else -> EmptyVH(host)
@@ -132,6 +138,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 if (!live.contains(h)) live.add(h)
                 h.bind(m, anim)
             }
+            is CallSummaryVH -> rows[pos].msg?.let(h::bind)
             is DayVH -> h.bind(rows[pos].day ?: "")
             is TypingVH -> h.bind()
         }
@@ -404,12 +411,13 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             val shownColor = host.messageColor(m)
             nameTv.text = shownName
             nameTv.setTextColor(shownColor)
-            val nextAvatarSig = "$shownName|$shownColor|${m.own}"
+            val avatarName = if (m.own) host.meName() else shownName
+            val nextAvatarSig = "$avatarName|$shownColor|${m.own}|${DpStore.revision(avatarName)}"
             if (avatarSig != nextAvatarSig) {
                 avatarSig = nextAvatarSig
                 avatarSlot.removeAllViews()
                 avatarSlot.addView(DpStore.circle(host.ctx(),
-                    if (m.own) host.meName() else shownName, shownColor, 34, isMe = m.own),
+                    avatarName, shownColor, 34, isMe = m.own),
                     FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT))
             }
@@ -711,6 +719,71 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                         bottomMargin = host.dp(if (host.originalPartyChat()) 6 else 10)
                     }
                 }
+        }
+    }
+
+    // ------------------------------------------------------- system call summary
+
+    /** Centered, avatar/name-free system card; normal message gestures never attach here. */
+    private class CallSummaryVH(private val host: ChatHost) : RecyclerView.ViewHolder(build(host)) {
+        private val title: TextView = itemView.findViewWithTag("call_title")
+        private val sub: TextView = itemView.findViewWithTag("call_sub")
+
+        fun bind(m: Msg) {
+            val clean = m.text.replace(Regex("^[📞📵☎️\\s]+"), "").trim()
+            title.text = clean.ifBlank { if (m.dur > 0) "Voice call ended" else "Voice call" }
+            val duration = if (m.dur > 0)
+                "Duration %02d:%02d".format(m.dur / 60, m.dur % 60) else "Private voice call"
+            sub.text = "$duration  •  ${m.time}"
+        }
+
+        companion object {
+            private fun build(host: ChatHost): View {
+                val root = FrameLayout(host.ctx()).apply {
+                    setPadding(host.dp(18), host.dp(6), host.dp(18), host.dp(6))
+                }
+                val card = LinearLayout(host.ctx()).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(host.dp(12), host.dp(9), host.dp(15), host.dp(9))
+                    background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                        intArrayOf(host.hex("#241643"), host.hex("#101c35"))).apply {
+                        cornerRadius = host.dp(18).toFloat()
+                        setStroke(host.dp(1), Color.argb(74, 139, 114, 255))
+                    }
+                    elevation = host.dp(4).toFloat()
+                }
+                card.addView(TextView(host.ctx()).apply {
+                    text = "☎"
+                    textSize = 17f
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.WHITE)
+                    background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                        intArrayOf(host.hex("#54e8ff"), host.hex("#8b72ff"))).apply {
+                        shape = GradientDrawable.OVAL
+                    }
+                }, LinearLayout.LayoutParams(host.dp(38), host.dp(38)))
+                card.addView(LinearLayout(host.ctx()).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(TextView(host.ctx()).apply {
+                        tag = "call_title"
+                        textSize = 12.5f
+                        setTypeface(typeface, Typeface.BOLD)
+                        setTextColor(Color.WHITE)
+                        setSingleLine(true)
+                    })
+                    addView(TextView(host.ctx()).apply {
+                        tag = "call_sub"
+                        textSize = 10f
+                        setTextColor(host.hex("#bdb5d4"))
+                        setSingleLine(true)
+                    })
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = host.dp(10) })
+                root.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                return root
+            }
         }
     }
 

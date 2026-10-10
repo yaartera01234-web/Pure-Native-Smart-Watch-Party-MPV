@@ -12,7 +12,9 @@ import com.google.firebase.firestore.SetOptions
 data class FriendProfile(
     val code: String,
     val name: String,
-    val color: String = "#8b72ff"
+    val color: String = "#8b72ff",
+    val avatarType: String = "",
+    val avatarData: String = ""
 )
 
 /** First-contact request shown above the normal Inbox chat rows. */
@@ -21,7 +23,9 @@ data class FriendRequest(
     val name: String,
     val color: String = "#8b72ff",
     val preview: String = "👋 Friend request",
-    val ts: Long = 0L
+    val ts: Long = 0L,
+    val avatarType: String = "",
+    val avatarData: String = ""
 )
 
 /**
@@ -272,6 +276,23 @@ object FirebaseChat {
         } catch (t: Throwable) { }
     }
 
+    /**
+     * Recipient ne khuli hui conversation mein jo messages dekh liye un par read=true.
+     * Sender ka live listener isi server transition par ticks ko blue karta hai — online
+     * presence ya local timer kabhi seen receipt nahi banate.
+     */
+    fun markRead(ctx: Context, chatId: String, ids: Collection<String>) {
+        val clean = ids.asSequence().filter { it.isNotBlank() }.distinct().take(400).toList()
+        if (!isReady(ctx) || chatId.isBlank() || clean.isEmpty()) return
+        try {
+            val batch = db(ctx).batch()
+            clean.forEach { id ->
+                batch.set(msgs(ctx, chatId).document(id), mapOf("read" to true), SetOptions.merge())
+            }
+            batch.commit()
+        } catch (_: Throwable) { }
+    }
+
     /** Chat clear: saare messages par wahi "mita hua" nishan (batch). */
     fun deleteAll(ctx: Context, chatId: String, ids: List<String>) {
         if (!isReady(ctx)) return
@@ -365,13 +386,15 @@ object FirebaseChat {
         if (code.length != 8 || name.isBlank()) return
         try {
             val now = System.currentTimeMillis()
+            val avatar = DpStore.shareableAvatar(ctx)
             db(ctx).collection("chats").document(FRIEND_CODE_CHAT)
                 .collection("msgs").document(code).set(
                     mapOf(
                         // Existing isValidMsg envelope:
                         "from" to name, "text" to "#8b72ff", "ts" to now,
-                        // Friend directory fields:
+                        // Friend directory fields, including the exact selected DP:
                         "code" to code, "name" to name, "color" to "#8b72ff",
+                        "avatarType" to avatar.type, "avatarData" to avatar.data,
                         "updatedAt" to now
                     ),
                     SetOptions.merge()
@@ -390,7 +413,13 @@ object FirebaseChat {
                     val name = (snap.getString("name") ?: snap.getString("from"))
                         ?.trim().orEmpty().take(40)
                     if (!snap.exists() || name.isBlank()) cb(null)
-                    else cb(FriendProfile(raw, name, snap.getString("color") ?: "#8b72ff"))
+                    else {
+                        val avatarType = snap.getString("avatarType").orEmpty()
+                        val avatarData = snap.getString("avatarData").orEmpty()
+                        DpStore.rememberRemote(ctx, name, avatarType, avatarData)
+                        cb(FriendProfile(raw, name, snap.getString("color") ?: "#8b72ff",
+                            avatarType, avatarData))
+                    }
                 }
                 .addOnFailureListener { cb(null) }
         } catch (_: Throwable) { cb(null) }
@@ -411,14 +440,16 @@ object FirebaseChat {
         try {
             val name = WpUser.me(ctx).take(40)
             val shortPreview = preview.take(160)
+            val avatar = DpStore.shareableAvatar(ctx)
             db(ctx).collection("chats").document(friendRequestChat(target))
                 .collection("msgs").document(mine)
                 .set(
                     mapOf(
                         // Existing isValidMsg envelope:
                         "from" to name, "text" to shortPreview, "ts" to System.currentTimeMillis(),
-                        // Request UI fields:
+                        // Request UI fields + sender ki selected original DP:
                         "code" to mine, "name" to name, "color" to "#8b72ff",
+                        "avatarType" to avatar.type, "avatarData" to avatar.data,
                         "preview" to shortPreview
                     ),
                     SetOptions.merge()
@@ -444,13 +475,20 @@ object FirebaseChat {
                         val name = (d.getString("name") ?: d.getString("from"))
                             ?.trim().orEmpty().take(40)
                         if (code.length != 8 || name.isBlank() || code == mine) null
-                        else FriendRequest(
-                            code = code,
-                            name = name,
-                            color = d.getString("color") ?: "#8b72ff",
-                            preview = d.getString("preview") ?: d.getString("text") ?: "👋 Friend request",
-                            ts = d.getLong("ts") ?: 0L
-                        )
+                        else {
+                            val avatarType = d.getString("avatarType").orEmpty()
+                            val avatarData = d.getString("avatarData").orEmpty()
+                            DpStore.rememberRemote(ctx, name, avatarType, avatarData)
+                            FriendRequest(
+                                code = code,
+                                name = name,
+                                color = d.getString("color") ?: "#8b72ff",
+                                preview = d.getString("preview") ?: d.getString("text") ?: "👋 Friend request",
+                                ts = d.getLong("ts") ?: 0L,
+                                avatarType = avatarType,
+                                avatarData = avatarData
+                            )
+                        }
                     }.sortedByDescending { it.ts }
                     onRequests(list)
                 }

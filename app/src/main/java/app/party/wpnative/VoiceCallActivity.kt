@@ -307,13 +307,25 @@ class VoiceCallActivity : Activity() {
     }
 
     private var avatarSig = ""
+    private var avatarLookupCode = ""
     private fun rebuildAvatar(value: CallSnapshot) {
-        val sig = "${value.peerName}|${value.peerCode}"
-        if (avatarSig == sig) return
-        avatarSig = sig
-        while (avatarHost.childCount > 2) avatarHost.removeViewAt(2)
-        avatarHost.addView(DpStore.circle(this, value.peerName.ifBlank { "Dost" },
-            colorFor(value.peerName), 112), FrameLayout.LayoutParams(dp(112), dp(112), Gravity.CENTER))
+        val peer = value.peerName.ifBlank { "Dost" }
+        val sig = "$peer|${value.peerCode}|${DpStore.revision(peer)}"
+        if (avatarSig != sig) {
+            avatarSig = sig
+            while (avatarHost.childCount > 2) avatarHost.removeViewAt(2)
+            avatarHost.addView(DpStore.circle(this, peer, colorFor(peer), 112),
+                FrameLayout.LayoutParams(dp(112), dp(112), Gravity.CENTER))
+        }
+        if (value.peerCode.length == 8 && avatarLookupCode != value.peerCode) {
+            avatarLookupCode = value.peerCode
+            FirebaseChat.findFriendProfile(this, value.peerCode) { profile ->
+                if (profile != null && !isFinishing) {
+                    avatarSig = ""
+                    rebuildAvatar(CallState.current())
+                }
+            }
+        }
     }
 
     private fun preview(peer: String, phase: CallPhase, text: String) {

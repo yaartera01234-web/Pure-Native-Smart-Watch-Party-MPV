@@ -29,7 +29,9 @@ data class PartyMember(
     val id: String,
     val name: String,
     val color: Int,
-    val ts: Long
+    val ts: Long,
+    val avatarType: String = "",
+    val avatarData: String = ""
 )
 
 /** Tower ka encrypted Room message metadata. Media khud retained blob topic mein hoti hai. */
@@ -226,6 +228,7 @@ object PartyTower {
     fun isConnected(): Boolean = connected
     fun hasLiveSession(): Boolean = !explicitLeaving && (joining || connected || client != null)
     fun currentMemberId(): String = memberId
+    fun refreshPresence() { if (connected && !explicitLeaving) publishPresence() }
 
     /** Lobby ke Enter Party ke baad hi call hota hai. */
     @Synchronized
@@ -337,15 +340,14 @@ object PartyTower {
     }
 
     private fun publishPresence() {
-        val avatar = app?.getSharedPreferences(PREF, Context.MODE_PRIVATE)?.let { p ->
-            JSONObject().apply {
-                put("type", p.getString("avatarType", "letter") ?: "letter")
-                val data = p.getString("avatarData", null)
-                if (!data.isNullOrBlank() && data.length < 200_000) {
-                    if (data.startsWith("http")) put("url", data) else put("data", data)
-                }
+        val selected = app?.let(DpStore::shareableAvatar) ?: DpStore.Avatar("letter")
+        val avatar = JSONObject().apply {
+            put("type", selected.type)
+            if (selected.data.isNotBlank()) {
+                if (selected.type == "dicebear") put("url", selected.data)
+                else put("data", selected.data)
             }
-        } ?: JSONObject().put("type", "letter")
+        }
         val body = JSONObject().apply {
             put("name", myName); put("color", colorString(myColor)); put("avatar", avatar)
             put("ts", System.currentTimeMillis())
@@ -734,8 +736,17 @@ object PartyTower {
             if (typingUsers.remove(id) != null) emitTyping()
         } else {
             val o = JSONObject(String(payload, StandardCharsets.UTF_8))
-            members[id] = PartyMember(id, o.optString("name", "Friend"),
-                parseColor(o.optString("color")), o.optLong("ts", System.currentTimeMillis()))
+            val name = o.optString("name", "Friend")
+            val avatar = o.optJSONObject("avatar")
+            val avatarType = avatar?.optString("type", "").orEmpty()
+            val avatarData = when (avatarType) {
+                "dicebear" -> avatar?.optString("url", "").orEmpty()
+                "upload" -> avatar?.optString("data", "").orEmpty()
+                else -> ""
+            }
+            app?.let { DpStore.rememberRemote(it, name, avatarType, avatarData) }
+            members[id] = PartyMember(id, name, parseColor(o.optString("color")),
+                o.optLong("ts", System.currentTimeMillis()), avatarType, avatarData)
         }
         emitMembers()
     }

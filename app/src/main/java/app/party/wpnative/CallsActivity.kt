@@ -34,6 +34,7 @@ class CallsActivity : Activity() {
     )
 
     private val calls = mutableListOf<CallItem>()
+    private val avatarLookups = HashSet<String>()
 
     private lateinit var listBox: LinearLayout
 
@@ -51,6 +52,7 @@ class CallsActivity : Activity() {
         super.onResume()
         reloadCalls()
         if (::listBox.isInitialized) fillList()
+        refreshHistoryAvatars()
         CallMiniBar.attach(this)
     }
 
@@ -75,6 +77,16 @@ class CallsActivity : Activity() {
                 if (record.outgoing) "↗" else "↙", record.missed,
                 day.format(Date(record.endedAt)), clock.format(Date(record.endedAt)),
                 colorFor(record.peerName), record)
+        }
+    }
+
+    /** Call record ke stable Friend Code se latest original DP cache/update karo. */
+    private fun refreshHistoryAvatars() {
+        CallStore.all(this).map { it.peerCode }.filter { it.length == 8 }.distinct().forEach { code ->
+            if (!avatarLookups.add(code)) return@forEach
+            FirebaseChat.findFriendProfile(this, code) { profile ->
+                if (profile != null && !isFinishing && ::listBox.isInitialized) fillList()
+            }
         }
     }
 
