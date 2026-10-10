@@ -105,3 +105,16 @@ jobs:
             SHA256SUMS.txt
             tests/mpv023/manifest.json
             tests/mpv023/README.md
+
+      # Actions artifacts GitHub login maangte hain. Arena branch par verified APK bhi
+      # publish karo taa-ke public repo ka seedha shareable /raw/ download link chale.
+      # GITHUB_TOKEN ki push naya workflow trigger nahi karti, isliye build loop nahi banta.
+      - name: Publish direct-download APK
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'arena/')
+        run: |
+          set -euo pipefail
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@example.com"
+          git add -f WatchParty-FirstPage.apk SHA256SUMS.txt
+          git commit -m "Publish direct-install APK [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
