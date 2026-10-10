@@ -284,13 +284,19 @@ class InboxActivity : Activity() {
         val meta = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.END
+            minimumWidth = dp(58) // `4:00 PM`/`10:59 PM` ka aakhri digit kabhi clip na ho
         }
         if (f.time.isNotBlank()) meta.addView(TextView(this).apply {
             text = f.time
             textSize = 9.5f
+            gravity = Gravity.END
+            setSingleLine(true)
+            includeFontPadding = false
+            minWidth = dp(58)
+            setPadding(dp(2), 0, dp(1), 0)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(if (f.unread) hex("#8ce8ff") else hex("#9e97c4"))
-        })
+        }, lp(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT))
         meta.addView(TextView(this).apply {
             text = if (f.unread) f.unreadCount.toString() else "🔒"
             textSize = if (f.unread) 10.5f else 11f

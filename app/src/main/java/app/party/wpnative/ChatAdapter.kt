@@ -164,6 +164,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         private val textTv: TextView
         private val photo: ImageView
         private var photoKey: String? = null
+        private val gif: GifMovieView
         private val voiceWrap: LinearLayout
         private val playBtn: TextView
         private val waveV: VoiceWave
@@ -270,8 +271,23 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 background = host.roundBox(Color.argb(31, 255, 255, 255),
                     Color.argb(46, 255, 255, 255), 12, 1)
                 setOnClickListener { openFullPhoto() }
+                setOnLongClickListener {
+                    bound?.let { host.onBubbleLongPress(it) }
+                    true
+                }
             }
             bubble.addView(photo, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            // Keyboard se aaya animated GIF; sirf visible RecyclerView row animate hota hai.
+            gif = GifMovieView(host.ctx()).apply {
+                visibility = View.GONE
+                setOnLongClickListener {
+                    bound?.let { host.onBubbleLongPress(it) }
+                    true
+                }
+            }
+            bubble.addView(gif, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
             // ---- voice (website .chat-voice .cv: ▶ + awaaz ki lakiren + second) ----
@@ -427,14 +443,27 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 // photo wala message: bubble mein photo, (ho to) caption neeche
                 m.type == "photo" && m.mediaKey.isNotBlank() -> {
                     photo.visibility = View.VISIBLE
+                    gif.visibility = View.GONE
+                    gif.clear()
                     voiceWrap.visibility = View.GONE
                     textTv.visibility = if (m.text.isBlank()) View.GONE else View.VISIBLE
                     loadPhoto(m)
+                }
+                // Gboard/Samsung keyboard ka animated GIF.
+                m.type == "gif" && m.mediaKey.isNotBlank() -> {
+                    photo.visibility = View.GONE
+                    if (photoKey != null) { photo.setImageDrawable(null); photoKey = null }
+                    gif.visibility = View.VISIBLE
+                    gif.bind(m.mediaKey, m.mediaUrl)
+                    voiceWrap.visibility = View.GONE
+                    textTv.visibility = View.GONE
                 }
                 // voice wala message: ▶ + awaaz ki lakiren + second
                 m.type == "voice" -> {
                     photo.visibility = View.GONE
                     if (photoKey != null) { photo.setImageDrawable(null); photoKey = null }
+                    gif.visibility = View.GONE
+                    gif.clear()
                     textTv.visibility = View.GONE
                     voiceWrap.visibility = View.VISIBLE
                     if (voiceKey != m.mediaKey) { voiceKey = m.mediaKey; waveV.setWave(m.wave) }
@@ -443,6 +472,8 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 else -> {
                     photo.visibility = View.GONE
                     if (photoKey != null) { photo.setImageDrawable(null); photoKey = null }
+                    gif.visibility = View.GONE
+                    gif.clear()
                     voiceWrap.visibility = View.GONE
                     textTv.visibility = View.VISIBLE
                 }

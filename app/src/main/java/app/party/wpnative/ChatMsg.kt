@@ -22,7 +22,8 @@ data class ChatMsg(
     var media: String = "",        // photo/voice ka asli maal (base64) — SIRF Firestore ke liye
     var dur: Int = 0,              // voice: kitne second
     var wave: String = "",         // voice: har 100ms ki awaaz "12,40,80,..."
-    var deleted: Boolean = false      // mita hua message (doosre phone ko bhi pata chale is liye)
+    var deleted: Boolean = false,     // mita hua message (doosre phone ko bhi pata chale is liye)
+    var reactions: MutableMap<String, String> = linkedMapOf() // stable actor-code -> emoji
 ) {
 
     /** Firestore ke liye. (media sirf tab, jab ho — document chhota rahe) */
@@ -38,7 +39,8 @@ data class ChatMsg(
             "type" to type,
             "dur" to dur,
             "wave" to wave,
-            "deleted" to deleted
+            "deleted" to deleted,
+            "reactions" to reactions
         )
         if (media.isNotBlank()) m["media"] = media
         return m
@@ -57,6 +59,9 @@ data class ChatMsg(
         put("dur", dur)
         put("wave", wave)
         put("deleted", deleted)
+        put("reactions", JSONObject().apply { reactions.forEach { (actor, emoji) -> put(actor, emoji) } })
+        // URL-backed keyboard GIF ko cache mein rakho; photo/voice/base64 ko nahi.
+        if (type == "gif" && media.startsWith("url:")) put("media", media)
     }
 
     companion object {
@@ -78,7 +83,14 @@ data class ChatMsg(
             media = m["media"] as? String ?: "",
             dur = (m["dur"] as? Long)?.toInt() ?: 0,
             wave = m["wave"] as? String ?: "",
-            deleted = m["deleted"] as? Boolean ?: false
+            deleted = m["deleted"] as? Boolean ?: false,
+            reactions = linkedMapOf<String, String>().apply {
+                (m["reactions"] as? Map<*, *>)?.forEach { (actor, emoji) ->
+                    if (actor is String && emoji is String && actor.isNotBlank() && emoji.isNotBlank()) {
+                        put(actor, emoji)
+                    }
+                }
+            }
         )
 
         /** Local cache (JSON) se. */
@@ -91,9 +103,22 @@ data class ChatMsg(
             replyName = o.optString("replyName", ""),
             replyText = o.optString("replyText", ""),
             type = o.optString("type", "text"),
+            media = o.optString("media", ""),
             dur = o.optInt("dur", 0),
             wave = o.optString("wave", ""),
-            deleted = o.optBoolean("deleted", false)
+            deleted = o.optBoolean("deleted", false),
+            reactions = jsonReactions(o.optJSONObject("reactions"))
         )
+
+        private fun jsonReactions(o: JSONObject?): MutableMap<String, String> =
+            linkedMapOf<String, String>().apply {
+                if (o == null) return@apply
+                val keys = o.keys()
+                while (keys.hasNext()) {
+                    val actor = keys.next()
+                    val emoji = o.optString(actor, "")
+                    if (actor.isNotBlank() && emoji.isNotBlank()) put(actor, emoji)
+                }
+            }
     }
 }

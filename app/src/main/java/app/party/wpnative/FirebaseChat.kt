@@ -222,8 +222,8 @@ object FirebaseChat {
 
     /** Live: sirf wahi messages jo `sinceTs` ke baad aaye (purane dobara nahi aate). */
     /**
-     * Chat ki **live nazar**: aakhri 50 messages.
-     * Naya message bhi isi se aata hai, aur koi message mita (deleted nishan) to wo bhi.
+     * Chat ki **live nazar**: retained aakhri 120 messages.
+     * Naya/delete/read/reaction sab isi se dono phones par turant aata hai.
      */
     fun listenNew(
         ctx: Context,
@@ -234,7 +234,7 @@ object FirebaseChat {
         return try {
             msgs(ctx, chatId)
                 .orderBy("ts", Query.Direction.DESCENDING)
-                .limit(50)
+                .limit(MSG_KEEP.toLong())
                 .addSnapshotListener { snap, _ ->
                     if (snap == null) return@addSnapshotListener
                     val out = snap.documents.mapNotNull { d ->
@@ -311,6 +311,40 @@ object FirebaseChat {
             }
             batch.commit()
         } catch (_: Throwable) { }
+    }
+
+    /**
+     * Ek actor ki reaction original message document par transaction se merge hoti hai.
+     * Is se simultaneous dono-phone reactions ek doosre ko overwrite nahi kartin aur koi
+     * fake reaction-message/unread badge bhi nahi banta. Khali emoji = apni reaction hatao.
+     */
+    fun setReaction(
+        ctx: Context,
+        chatId: String,
+        messageId: String,
+        actor: String,
+        emoji: String,
+        onDone: (Boolean) -> Unit = {}
+    ) {
+        if (!isReady(ctx) || chatId.isBlank() || messageId.isBlank() || actor.isBlank()) {
+            onDone(false); return
+        }
+        try {
+            val ref = msgs(ctx, chatId).document(messageId)
+            db(ctx).runTransaction { tx ->
+                val snap = tx.get(ref)
+                if (!snap.exists()) throw IllegalStateException("message missing")
+                val reactions = linkedMapOf<String, String>()
+                (snap.get("reactions") as? Map<*, *>)?.forEach { (key, value) ->
+                    if (key is String && value is String && key.isNotBlank() && value.isNotBlank()) {
+                        reactions[key] = value
+                    }
+                }
+                if (emoji.isBlank()) reactions.remove(actor) else reactions[actor] = emoji
+                tx.update(ref, "reactions", reactions)
+            }.addOnSuccessListener { onDone(true) }
+                .addOnFailureListener { onDone(false) }
+        } catch (_: Throwable) { onDone(false) }
     }
 
     /** Chat clear: saare messages par wahi "mita hua" nishan (batch). */

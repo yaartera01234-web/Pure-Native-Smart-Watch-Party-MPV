@@ -32,6 +32,7 @@ import android.view.Window
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputContentInfo
 import android.view.inputmethod.InputMethodManager
 import android.view.View
 import android.view.ViewGroup
@@ -84,6 +85,7 @@ class ChatActivity : Activity(), ChatHost {
     // ---- Firebase (Firestore) ----
     private var me = "Me"
     private var chatId = ""
+    private var reactionActor = ""
     private var msgListener: ListenerRegistration? = null
     private var presenceListener: ListenerRegistration? = null
     private var typingListener: ListenerRegistration? = null
@@ -145,6 +147,9 @@ class ChatActivity : Activity(), ChatHost {
         )
         peerColor = pickColor(peer)
         me = WpUser.me(this)
+        reactionActor = WpUser.friendCodeRaw(this).ifBlank {
+            "name_${Integer.toHexString(me.lowercase(Locale.ROOT).hashCode())}"
+        }
         chatId = intent.getStringExtra("chatId")?.takeIf { it.isNotBlank() }
             ?: WpUser.friendChatId(this, peer, peerCode)
         MediaCleanup.runIfDue(this)     // 3 din purani photo/voice khud mit jayen
@@ -413,7 +418,7 @@ class ChatActivity : Activity(), ChatHost {
     private fun sigOf(m: Msg): String =
         m.text + "|" + m.read + "|" + m.replyText + "|" + m.time + "|" + m.deleted + "|" +
             m.type + "|" + m.mediaKey + "|" + m.dur + "|" +
-            m.rx.entries.joinToString(",") { "${it.key}:${it.value}" }
+            m.rx.entries.joinToString(",") { "${it.key}:${it.value}:${m.rxCounts[it.key] ?: 1}" }
 
     /** Dots dikhane/chhupane ka switch — asli chat mein server ke signal se chalega. */
     private fun setTyping(on: Boolean) {
@@ -433,6 +438,10 @@ class ChatActivity : Activity(), ChatHost {
      * -> dono devices par emoji udega. Koi alag code nahi.
      */
     private fun flyReaction(emoji: String) {
+        if (!::flyLayer.isInitialized || emoji.isBlank()) return
+        flyLayer.visibility = View.VISIBLE
+        flyLayer.bringToFront()
+        flyLayer.elevation = dp(40).toFloat()
         val v = TextView(this).apply {
             text = emoji
             textSize = 30f
@@ -502,7 +511,8 @@ class ChatActivity : Activity(), ChatHost {
             startVoice()
         }, lp(dp(36), dp(36)).apply { rightMargin = dp(4) })
 
-        input = EditText(this).apply {
+        input = KeyboardGifEditText(this).apply {
+            onGifContent = { content -> receiveKeyboardGif(content); true }
             hint = "Message likho..."
             setHintTextColor(Color.argb(140, 255, 255, 255))
             setTextColor(Color.WHITE)
@@ -795,14 +805,17 @@ class ChatActivity : Activity(), ChatHost {
 
     /** Live nazar: naya message bhi aata hai, aur doosre ka mitaya hua bhi turant hat ta hai. */
     private fun startLiveListener() {
-        msgListener?.remove()
+        if (msgListener != null) return
+        var firstSnapshot = true
         msgListener = FirebaseChat.listenNew(this, chatId) { list ->
             // --- doosre ne delete kiya? -> yahan se bhi turant hata do ---
             val gone = list.filter { it.deleted }.map { it.id }.toHashSet()
             val removed = gone.isNotEmpty() && msgs.removeAll { it.fid in gone }
             // --- naye messages ---
             val before = msgs.size
-            val changed = mergeIncoming(list.filterNot { it.deleted }, prepend = false)
+            val changed = mergeIncoming(list.filterNot { it.deleted }, prepend = false,
+                flyReactions = !firstSnapshot)
+            firstSnapshot = false
             val added = msgs.size > before
             if (added) animId = msgs.lastOrNull()?.id ?: -1   // aaya hua message bhi aise hi aaye
             if (removed || added || changed) {
@@ -828,14 +841,17 @@ class ChatActivity : Activity(), ChatHost {
     private fun toMsg(cm: ChatMsg): Msg {
         /* Photo/voice ka asli maal (base64) phone mein save kar lo —
            baar baar Firestore se download na ho. Chaabi = asli id (warna L<waqt>). */
-        val mediaType = cm.type == "photo" || cm.type == "voice"
+        val mediaType = cm.type == "photo" || cm.type == "voice" || cm.type == "gif"
         val key = if (mediaType) cm.id.ifBlank { "L${cm.ts}" } else ""
-        if (cm.media.isNotBlank() && key.isNotBlank() && !MediaCache.has(this, key)) {
+        val mediaUrl = if (cm.type == "gif" && cm.media.startsWith("url:"))
+            cm.media.removePrefix("url:") else ""
+        if (cm.media.isNotBlank() && mediaUrl.isBlank() && key.isNotBlank() &&
+            !MediaCache.has(this, key)) {
             MediaCache.unb64(cm.media)?.let { MediaCache.save(this, key, it) }
         }
-        // Firestore mein is message ke sath asli photo/voice hai -> 3 din baad khud mit jaye
+        // Firestore mein is message ke sath media hai -> 3 din baad khud mit jaye
         if (mediaType) MediaCleanup.note(this, chatId, cm.id, cm.ts)
-        return Msg(
+        val out = Msg(
             id = nextId++,
             text = cm.text,
             own = cm.from == me,
@@ -849,9 +865,12 @@ class ChatActivity : Activity(), ChatHost {
             deleted = cm.deleted,
             type = cm.type,
             mediaKey = key,
+            mediaUrl = mediaUrl,
             dur = cm.dur,
             wave = cm.wave
         )
+        applyReactionActors(out, cm.reactions, flyRemote = false)
+        return out
     }
 
     private fun newestTs(): Long = msgs.maxOfOrNull { it.ts } ?: 0L
@@ -861,7 +880,11 @@ class ChatActivity : Activity(), ChatHost {
      * Firebase rows milao. Naye documents insert hote hain aur existing sender rows ka
      * read=false -> true transition bhi merge hota hai, warna blue tick kabhi update nahi hota.
      */
-    private fun mergeIncoming(list: List<ChatMsg>, prepend: Boolean): Boolean {
+    private fun mergeIncoming(
+        list: List<ChatMsg>,
+        prepend: Boolean,
+        flyReactions: Boolean = false
+    ): Boolean {
         var changed = false
         val existing = msgs.filter { it.fid.isNotBlank() }.associateBy { it.fid }
         list.forEach { remote ->
@@ -869,6 +892,9 @@ class ChatActivity : Activity(), ChatHost {
             if (remote.read != local.read) {
                 // Server is authoritative; this also repairs old builds' timer-made blue ticks.
                 local.read = remote.read
+                changed = true
+            }
+            if (applyReactionActors(local, remote.reactions, flyRemote = flyReactions)) {
                 changed = true
             }
         }
@@ -924,7 +950,9 @@ class ChatActivity : Activity(), ChatHost {
                 from = if (it.own) me else peer,
                 text = it.text, ts = it.ts, read = it.read,
                 replyName = it.replyName, replyText = it.replyText,
-                type = it.type, dur = it.dur, wave = it.wave
+                type = it.type, media = if (it.mediaUrl.isNotBlank()) "url:${it.mediaUrl}" else "",
+                dur = it.dur, wave = it.wave,
+                reactions = LinkedHashMap(it.reactionActors)
             )
         })
     }
@@ -965,6 +993,80 @@ class ChatActivity : Activity(), ChatHost {
     }
 
     // ============================ KAAM ============================
+
+    // ------------------------------------------------------ KEYBOARD GIF
+
+    /**
+     * Gboard/Samsung ka GIF: direct HTTPS .gif URL ho to sirf URL (tez); warna chhota
+     * payload Firestore mein. 680 KiB raw limit base64 ke baad bhi 1 MiB doc ke andar hai.
+     */
+    private fun receiveKeyboardGif(content: InputContentInfo) {
+        val uri = content.contentUri
+        val directUrl = content.linkUri?.toString()?.takeIf(::isDirectGifUrl).orEmpty()
+        Toast.makeText(this, "GIF taiyar ho rahi hai…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val bytes = try {
+                contentResolver.openInputStream(uri)?.use { inputStream ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buf = ByteArray(16 * 1024)
+                    var total = 0
+                    var tooLarge = false
+                    while (true) {
+                        val n = inputStream.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > 8 * 1024 * 1024) { tooLarge = true; break }
+                        out.write(buf, 0, n)
+                    }
+                    if (tooLarge) null else out.toByteArray().takeIf(GifMovieView::isGif)
+                }
+            } catch (_: Throwable) { null }
+            try { content.releasePermission() } catch (_: Throwable) { }
+            runOnUiThread {
+                when {
+                    isFinishing -> Unit
+                    directUrl.isNotBlank() -> sendGif(bytes, directUrl)
+                    bytes == null -> Toast.makeText(this,
+                        "Ye keyboard GIF share nahi kar saka — doosri GIF try karein", Toast.LENGTH_LONG).show()
+                    bytes.size > 680 * 1024 -> Toast.makeText(this,
+                        "GIF bohat bari hai — chhoti GIF choose karein", Toast.LENGTH_LONG).show()
+                    else -> sendGif(bytes, "")
+                }
+            }
+        }.start()
+    }
+
+    private fun isDirectGifUrl(raw: String): Boolean = try {
+        val uri = android.net.Uri.parse(raw)
+        uri.scheme.equals("https", true) &&
+            (uri.path.orEmpty().lowercase(Locale.ROOT).endsWith(".gif") ||
+                raw.substringBefore('?').lowercase(Locale.ROOT).endsWith(".gif"))
+    } catch (_: Throwable) { false }
+
+    private fun sendGif(bytes: ByteArray?, directUrl: String) {
+        val now = System.currentTimeMillis()
+        val key = "L$now"
+        if (bytes != null) MediaCache.save(this, key, bytes)
+        val m = Msg(nextId++, "", true, timeShort(now), dayLabel(now),
+            read = false, ts = now, type = "gif", mediaKey = key, mediaUrl = directUrl)
+        msgs.add(m)
+
+        val cm = ChatMsg(from = me, text = "", ts = now, type = "gif")
+        cm.media = if (directUrl.isNotBlank()) "url:$directUrl"
+            else bytes?.let { MediaCache.b64(it) }.orEmpty()
+        if (FirebaseChat.send(this, chatId, cm) { pruneAfterSend() }) {
+            MediaCache.rename(this, key, cm.id)
+            m.fid = cm.id
+            m.mediaKey = cm.id
+            MediaCleanup.note(this, chatId, cm.id, now)
+        }
+        trimToLimit()
+        saveCache()
+        animId = m.id
+        renderThread()
+        scrollBottom()
+        startLiveListener()
+    }
 
     // ------------------------------------------------------------ PHOTO
 
@@ -1234,11 +1336,58 @@ class ChatActivity : Activity(), ChatHost {
         dlg.show()
     }
 
+    /** Firestore actor-map ko Original ke emoji/count/mine chips mein badlo. */
+    private fun applyReactionActors(m: Msg, actors: Map<String, String>, flyRemote: Boolean): Boolean {
+        val clean = actors.filter { it.key.isNotBlank() && it.value.isNotBlank() }
+        if (m.reactionActors == clean) return false
+        val oldPeer = m.reactionActors.filterKeys { it != reactionActor }
+        val newPeer = clean.filterKeys { it != reactionActor }
+        m.reactionActors.clear()
+        m.reactionActors.putAll(clean)
+        m.rx.clear()
+        m.rxCounts.clear()
+        clean.values.groupingBy { it }.eachCount().forEach { (emoji, count) ->
+            m.rx[emoji] = clean[reactionActor] == emoji
+            m.rxCounts[emoji] = count
+        }
+        if (flyRemote) {
+            newPeer.forEach { (actor, emoji) ->
+                if (oldPeer[actor] != emoji) window.decorView.post { flyReaction(emoji) }
+            }
+        }
+        return true
+    }
+
     private fun toggleRx(m: Msg, emoji: String) {
-        val adding = m.rx[emoji] != true
-        if (adding) m.rx[emoji] = true else m.rx.remove(emoji)
+        if (emoji.isBlank()) return
+        val before = LinkedHashMap(m.reactionActors)
+        val next = LinkedHashMap(before)
+        val newEmoji = if (before[reactionActor] == emoji) "" else emoji
+        if (newEmoji.isBlank()) next.remove(reactionActor) else next[reactionActor] = newEmoji
+        applyReactionActors(m, next, flyRemote = false)
+        saveCache()
         renderThread()
-        if (adding) flyReaction(emoji)
+        if (newEmoji.isNotBlank()) {
+            // Bottom-sheet window band hone ke agle frame mein overlay sab se upar ho.
+            window.decorView.post {
+                flyLayer.bringToFront()
+                flyReaction(newEmoji)
+            }
+        }
+        if (m.fid.isBlank() || !FirebaseChat.isReady(this)) {
+            Toast.makeText(this, "📡 Reaction phone par save hai — net aane par dobara tap karein",
+                Toast.LENGTH_SHORT).show()
+            return
+        }
+        val optimistic = LinkedHashMap(next)
+        FirebaseChat.setReaction(this, chatId, m.fid, reactionActor, newEmoji) { ok ->
+            if (!ok && m.reactionActors == optimistic && !isFinishing) {
+                applyReactionActors(m, before, flyRemote = false)
+                saveCache()
+                renderThread()
+                Toast.makeText(this, "Reaction bheji nahi ja saki", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun deleteMsg(m: Msg) {

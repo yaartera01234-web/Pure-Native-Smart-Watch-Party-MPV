@@ -119,6 +119,7 @@ object DmInboxStore {
 
     private fun preview(m: ChatMsg): String = when (m.type) {
         "photo" -> "🖼️ Photo"
+        "gif" -> "🎞️ GIF"
         "voice" -> "🎤 Voice message"
         "call" -> "☎ Voice call"
         else -> m.text.trim().replace(Regex("\\s+"), " ").take(90)

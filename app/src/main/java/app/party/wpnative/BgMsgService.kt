@@ -98,7 +98,13 @@ class BgMsgService : Service() {
                     if (prev == null) return@listenInboxSummary
                     if (m.ts <= prev) return@listenInboxSummary
                     if (m.from == me || m.type == "call") return@listenInboxSummary
-                    WpNotify.post(this, p.name, m.text, chatId, p.code)
+                    val body = when (m.type) {
+                        "photo" -> "🖼️ Photo"
+                        "gif" -> "🎞️ GIF"
+                        "voice" -> "🎤 Voice message"
+                        else -> m.text
+                    }
+                    WpNotify.post(this, p.name, body, chatId, p.code)
                 }
                 if (r != null) regs[chatId] = r
             } catch (t: Throwable) { }
