@@ -1,4 +1,4 @@
-name: "WP Native first page - build APK"
+name: "WP Native MPV023 - build APK"
 
 on:
   push:
@@ -27,15 +27,57 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Prepare exact Synkplay v0.23.0 native engine
+        run: |
+          set -euo pipefail
+          exec > >(tee /tmp/engine.log) 2>&1
+          # ubuntu-latest already provides Android command-line tools. Avoid the
+          # deprecated setup-android Node action; install only the pinned pieces.
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;29.0.14206865' 'build-tools;35.0.0'
+          python3 tests/mpv023/engine_swap.py prepare --work /tmp/mpv023
+          python3 tests/mpv023/engine_swap.py build --work /tmp/mpv023 \
+            --ndk "$ANDROID_HOME/ndk/29.0.14206865"
+
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.11.1
 
-      - name: Build debug APK
+      - name: Build debug base APK
         run: |
           set -o pipefail
           gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
+
+      - name: Substitute exact MPV023 engine, align and sign APK
+        run: |
+          set -euo pipefail
+          exec > >(tee /tmp/swap.log) 2>&1
+          SDK="$ANDROID_HOME/build-tools/35.0.0"
+          BASE=$(find app/build/outputs/apk -name '*.apk' -type f | head -1)
+          test -n "$BASE"
+          KEYSTORE=/tmp/mpv023/output-debug.keystore
+          keytool -genkeypair -noprompt -keystore "$KEYSTORE" \
+            -storepass android -alias androiddebugkey -keypass android \
+            -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+          python3 tests/mpv023/engine_swap.py swap --work /tmp/mpv023 \
+            --base "$BASE" --output /tmp/mpv023/unsigned.apk
+          "$SDK/zipalign" -P 16 -f 4 /tmp/mpv023/unsigned.apk /tmp/mpv023/aligned.apk
+          "$SDK/apksigner" sign \
+            --ks "$KEYSTORE" --ks-key-alias androiddebugkey \
+            --ks-pass pass:android --key-pass pass:android \
+            --out WatchParty-FirstPage.apk /tmp/mpv023/aligned.apk
+          "$SDK/apksigner" verify --verbose --print-certs WatchParty-FirstPage.apk
+          "$SDK/zipalign" -c -P 16 4 WatchParty-FirstPage.apk
+          python3 tests/mpv023/engine_swap.py verify --work /tmp/mpv023 \
+            --base "$BASE" --output WatchParty-FirstPage.apk
+          unzip -p WatchParty-FirstPage.apk lib/arm64-v8a/libmpv.so | \
+            strings | grep -F 'mpv v0.41.0-252-gc401ef9c3'
+          unzip -p WatchParty-FirstPage.apk lib/arm64-v8a/libavcodec.so | \
+            strings | grep -F 'FFmpeg version N-123143-g0540b42657'
+          sha256sum WatchParty-FirstPage.apk | tee SHA256SUMS.txt
 
       # Fail ho to poora Gradle log branch par daal do (artefact download
       # har jagah se possible nahi hota — log seedha padhne ke liye).
@@ -45,17 +87,15 @@ jobs:
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
           git checkout -B ci-logs
-          cp /tmp/gradle.log gradle-error.log
+          {
+            if [ -f /tmp/engine.log ]; then echo '=== MPV023 ENGINE ==='; cat /tmp/engine.log; fi
+            if [ -f /tmp/gradle.log ]; then echo '=== GRADLE ==='; cat /tmp/gradle.log; fi
+            if [ -f /tmp/swap.log ]; then echo '=== APK ENGINE SWAP ==='; cat /tmp/swap.log; fi
+          } > gradle-error.log
+          test -s gradle-error.log || echo "Failure artifact substitution mein hui; Actions log dekhein." > gradle-error.log
           git add -f gradle-error.log
           git commit -m "gradle error log (run $GITHUB_RUN_ID)" || exit 0
           git push -f origin ci-logs
-
-      - name: Prepare artifact
-        run: |
-          set -euo pipefail
-          APK=$(find app/build/outputs/apk -name '*.apk' -type f | head -1)
-          cp "$APK" WatchParty-FirstPage.apk
-          sha256sum WatchParty-FirstPage.apk | tee SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -63,3 +103,5 @@ jobs:
           path: |
             WatchParty-FirstPage.apk
             SHA256SUMS.txt
+            tests/mpv023/manifest.json
+            tests/mpv023/README.md

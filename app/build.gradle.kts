@@ -15,10 +15,11 @@ android {
 
     defaultConfig {
         applicationId = "app.party.wpnative"
-        minSdk = 24
+        // Exact Synkplay v0.23.0 JNI/native bundle is built against Android 8 (API 26).
+        minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.18-NATIVE-MPV"
+        versionCode = 3
+        versionName = "0.19-NATIVE-MPV023"
         // Reference player ships one native MPV ABI; keeping it exact also avoids a
         // needlessly huge universal APK.
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -55,7 +56,8 @@ dependencies {
     // Party Room ka selected public MQTT tower (EMQX / HiveMQ / tyckr), pure native WSS.
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
 
-    // Smart Music Watch Party ACT7 ka exact MPV surface/core pair.
+    // ACT7 ka Kotlin surface/wrapper. CI final APK mein iske stock native bundle ko
+    // tests/mpv023 ke verified Synkplay v0.23.0 engine + rebuilt JNI se replace karta hai.
     implementation("io.github.yuroyami:libmpvkt:0.3.0")
     implementation("io.github.yuroyami:libmpvkt-view:0.3.0")
 

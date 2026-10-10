@@ -1806,7 +1806,22 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         updatePlayerUi()
     }
 
+    /** Link Play dabte hi URI field ka IME/focus hata kar poora Room layout wapas lao. */
+    private fun dismissSourceKeyboard() {
+        val token = sourceInput.windowToken ?: window.decorView.windowToken
+        sourceInput.clearFocus()
+        roomBackdrop.isFocusableInTouchMode = true
+        roomBackdrop.requestFocus()
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+            ?.hideSoftInputFromWindow(token, 0)
+        // Insets callback bhi baad mein yahi state confirm karega; immediate restore se
+        // player/playlist keyboard animation ke peeche chhupe nahi rehte.
+        setRoomKeyboardMode(false)
+        roomBackdrop.post { roomBackdrop.requestApplyInsets() }
+    }
+
     private fun playSourceNow() {
+        dismissSourceKeyboard()
         val raw = sourceInput.text.toString().trim()
         if (raw.isBlank()) {
             Toast.makeText(this, "Pehle YouTube, MP4 ya MP3 link paste karo", Toast.LENGTH_SHORT).show()
