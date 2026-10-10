@@ -170,10 +170,13 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     private val playerIo = Executors.newSingleThreadExecutor()
     private val serviceCommand: (String) -> Unit = { command -> runOnUiThread {
         when (command) {
+            PartyPlayerService.ACTION_PREVIOUS -> userQueueStep(-1)
+            PartyPlayerService.ACTION_PLAY -> if (!desiredPlaying) userPlayPlayback()
+            PartyPlayerService.ACTION_PAUSE -> if (desiredPlaying) userPausePlayback()
             PartyPlayerService.ACTION_TOGGLE -> userTogglePlayback()
+            PartyPlayerService.ACTION_NEXT -> userQueueStep(1)
             PartyPlayerService.ACTION_BACK -> userSeekBy(-10.0)
             PartyPlayerService.ACTION_FORWARD -> userSeekBy(10.0)
-            PartyPlayerService.ACTION_STOP -> userPausePlayback()
         }
     } }
     private val playbackSync by lazy {
@@ -2125,6 +2128,14 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         publishPlaybackSnapshot(media, time, false, wp4.getJSONArray("epoch"), clockRunning = false)
         showPlayerActivity(WpUser.me(this), "pause", "Paused", clockForFeed(time))
         updatePlayerUi()
+    }
+
+    /** Lock-screen previous/next selects the real Room queue item and publishes it. */
+    private fun userQueueStep(delta: Int) {
+        if (delta != -1 && delta != 1) return
+        val target = partyQueueIndex + delta
+        if (target !in partyQueue.indices) return
+        playQueueItem(target)
     }
 
     private fun userSeekBy(delta: Double) = userSeekTo((mpvVideo?.position() ?: 0.0) + delta)

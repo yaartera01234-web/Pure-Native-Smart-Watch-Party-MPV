@@ -7,6 +7,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.media.MediaMetadata
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
 import java.lang.ref.WeakReference
@@ -18,10 +21,13 @@ class PartyPlayerService : Service() {
         private const val NOTIFICATION = 4703
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_PLAYING = "playing"
+        const val ACTION_PREVIOUS = "app.party.wpnative.player.PREVIOUS"
+        const val ACTION_PLAY = "app.party.wpnative.player.PLAY"
+        const val ACTION_PAUSE = "app.party.wpnative.player.PAUSE"
         const val ACTION_TOGGLE = "app.party.wpnative.player.TOGGLE"
+        const val ACTION_NEXT = "app.party.wpnative.player.NEXT"
         const val ACTION_BACK = "app.party.wpnative.player.BACK"
         const val ACTION_FORWARD = "app.party.wpnative.player.FORWARD"
-        const val ACTION_STOP = "app.party.wpnative.player.STOP"
         private const val ACTION_UPDATE = "app.party.wpnative.player.UPDATE"
 
         @Volatile private var receiver: WeakReference<(String) -> Unit>? = null
@@ -47,9 +53,23 @@ class PartyPlayerService : Service() {
 
     private var title = "Watch Party"
     private var playing = false
+    private lateinit var mediaSession: MediaSession
 
     override fun onCreate() {
         super.onCreate()
+        mediaSession = MediaSession(this, "WatchPartyPlayer").apply {
+            setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
+                MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
+            setCallback(object : MediaSession.Callback() {
+                override fun onPlay() = dispatch(ACTION_PLAY)
+                override fun onPause() = dispatch(ACTION_PAUSE)
+                override fun onSkipToPrevious() = dispatch(ACTION_PREVIOUS)
+                override fun onSkipToNext() = dispatch(ACTION_NEXT)
+                override fun onRewind() = dispatch(ACTION_BACK)
+                override fun onFastForward() = dispatch(ACTION_FORWARD)
+            })
+            isActive = true
+        }
         if (Build.VERSION.SDK_INT >= 26) {
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(NotificationChannel(CHANNEL, "Party player",
@@ -66,15 +86,33 @@ class PartyPlayerService : Service() {
                 title = intent?.getStringExtra(EXTRA_TITLE)?.take(80) ?: title
                 playing = intent?.getBooleanExtra(EXTRA_PLAYING, playing) ?: playing
             }
-            ACTION_STOP -> {
-                receiver?.get()?.invoke(ACTION_STOP)
-                stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
-                return START_NOT_STICKY
-            }
-            ACTION_TOGGLE, ACTION_BACK, ACTION_FORWARD -> receiver?.get()?.invoke(intent.action!!)
+            ACTION_PREVIOUS, ACTION_PLAY, ACTION_PAUSE, ACTION_TOGGLE, ACTION_NEXT,
+            ACTION_BACK, ACTION_FORWARD -> dispatch(intent.action!!)
         }
+        syncMediaSession()
         startForeground(NOTIFICATION, notification())
         return START_NOT_STICKY
+    }
+
+    private fun dispatch(action: String) {
+        receiver?.get()?.invoke(action)
+    }
+
+    private fun syncMediaSession() {
+        val actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
+            PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+            PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_REWIND or
+            PlaybackState.ACTION_FAST_FORWARD
+        mediaSession.setPlaybackState(PlaybackState.Builder()
+            .setActions(actions)
+            .setState(if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
+                PlaybackState.PLAYBACK_POSITION_UNKNOWN, if (playing) 1f else 0f)
+            .build())
+        mediaSession.setMetadata(MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "Watch Party" })
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, "Watch Party · Room sync")
+            .build())
+        mediaSession.isActive = true
     }
 
     private fun notification(): Notification {
@@ -87,18 +125,28 @@ class PartyPlayerService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or immutable())
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
         else @Suppress("DEPRECATION") Notification.Builder(this)
-        val prev = Notification.Action.Builder(R.drawable.ic_notif, "Back 10", service(ACTION_BACK, 2)).build()
-        val toggle = Notification.Action.Builder(R.drawable.ic_notif, if (playing) "Pause" else "Play", service(ACTION_TOGGLE, 3)).build()
-        val next = Notification.Action.Builder(R.drawable.ic_notif, "Forward 10", service(ACTION_FORWARD, 4)).build()
-        val stop = Notification.Action.Builder(R.drawable.ic_notif, "Stop", service(ACTION_STOP, 5)).build()
+        // Expanded panel keeps ten-second seeking as well. Compact/lock-screen controls
+        // are the standard previous-song, play/pause and next-song trio.
+        val previous = Notification.Action.Builder(android.R.drawable.ic_media_previous,
+            "Previous song", service(ACTION_PREVIOUS, 2)).build()
+        val back = Notification.Action.Builder(android.R.drawable.ic_media_rew,
+            "Back 10 seconds", service(ACTION_BACK, 3)).build()
+        val toggle = Notification.Action.Builder(
+            if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+            if (playing) "Pause" else "Play", service(ACTION_TOGGLE, 4)).build()
+        val forward = Notification.Action.Builder(android.R.drawable.ic_media_ff,
+            "Forward 10 seconds", service(ACTION_FORWARD, 5)).build()
+        val next = Notification.Action.Builder(android.R.drawable.ic_media_next,
+            "Next song", service(ACTION_NEXT, 6)).build()
         return builder.setSmallIcon(R.drawable.ic_notif)
             .setContentTitle(title.ifBlank { "Watch Party" })
             .setContentText("Native MPV · Party sync")
             .setContentIntent(open)
             .setOnlyAlertOnce(true).setOngoing(playing).setCategory(Notification.CATEGORY_TRANSPORT)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .addAction(prev).addAction(toggle).addAction(next).addAction(stop)
-            .setStyle(Notification.MediaStyle().setShowActionsInCompactView(0, 1, 2))
+            .addAction(previous).addAction(back).addAction(toggle).addAction(forward).addAction(next)
+            .setStyle(Notification.MediaStyle().setMediaSession(mediaSession.sessionToken)
+                .setShowActionsInCompactView(0, 2, 4))
             .build()
     }
 
@@ -109,6 +157,14 @@ class PartyPlayerService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onDestroy() {
+        if (::mediaSession.isInitialized) {
+            mediaSession.isActive = false
+            mediaSession.release()
+        }
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

@@ -14,8 +14,9 @@ Ab shamil hai:
 - Explicit Leave par us phone ki Room chat/media cache saaf; Room khaali hone ke baad bhi shared playback/media state retained rehti hai
 - `WP1-XXXX-XXXX` Friend Codes: own-code Copy/Share, lookup, requests, Accept/Reject aur stable code-backed DM chats
 - Native YouTube Search: Piped multi-instance primary, YouTube Data API fallback, recent/suggestions, thumbnails/duration
-- Search result tap par item queue ke end mein add aur poore Room ke liye synchronized play
+- Search result tap par item queue ke end mein add aur poore Room ke liye synchronized play; recent chips re-entrant click ke baghair safe search chalate hain
 - Playlist chat se independent retained rehti hai, YouTube thumbnail/title aur custom rename/remove ke sath
+- Native MediaSession lock-screen controls: previous/next queue song, play/pause aur ±10-second seek; har action Room mein sync hota hai
 - Party chat quick emoji, swipe reply, reaction chips aur flying emoji
 - Keyboard-safe Room typing mode: keyboard khulte hi composer aur message thread visible rehte hain
 

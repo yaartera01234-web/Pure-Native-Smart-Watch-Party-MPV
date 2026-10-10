@@ -41,6 +41,7 @@ internal class YouTubeSearchDialog(
     private lateinit var sourceMeta: TextView
     private var searchHandle: YouTubeSearch.Handle? = null
     private var generation = 0
+    private var settingSuggestion = false
 
     private val fixedSuggestions = listOf(
         "lofi girl", "arijit singh songs", "punjabi songs", "coke studio",
@@ -133,6 +134,7 @@ internal class YouTubeSearchDialog(
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
                 override fun afterTextChanged(s: Editable?) {
+                    if (settingSuggestion) return
                     renderSuggestions()
                     handler.removeCallbacks(debounce)
                     if (s.isNullOrBlank()) {
@@ -222,13 +224,33 @@ internal class YouTubeSearchDialog(
                 setTextColor(hex("#ddd9f5"))
                 setPadding(dp(11), 0, dp(11), 0)
                 background = round(theme.chip, theme.itemStroke, 20)
-                setOnClickListener {
-                    query.setText(value); query.setSelection(value.length)
-                    handler.removeCallbacks(debounce); runSearch(value)
-                }
+                setOnClickListener { chooseSuggestion(value) }
             }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(31)).apply { rightMargin = dp(6) })
         }
         suggestions.visibility = if (values.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * A chip must not rewrite and rebuild its own parent while Android is still
+     * dispatching that chip's click. Finish dispatching first, then update the field
+     * without re-entering its TextWatcher.
+     */
+    private fun chooseSuggestion(value: String) {
+        handler.removeCallbacks(debounce)
+        handler.post {
+            if (!dialog.isShowing || activity.isFinishing || activity.isDestroyed) return@post
+            try {
+                settingSuggestion = true
+                query.setText(value)
+                query.setSelection(query.text.length)
+                settingSuggestion = false
+                runSearch(value)
+            } catch (_: RuntimeException) {
+                settingSuggestion = false
+                searchHandle?.cancel(); searchHandle = null; generation++
+                if (dialog.isShowing) runCatching { renderEmpty("down", value) }
+            }
+        }
     }
 
     private fun runSearch(raw: String) {
