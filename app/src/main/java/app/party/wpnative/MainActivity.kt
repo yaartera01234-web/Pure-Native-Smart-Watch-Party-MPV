@@ -68,6 +68,8 @@ class MainActivity : Activity() {
     private lateinit var roomInput: EditText
     private lateinit var towerBtn: Button
     private lateinit var titleView: GradientText
+    private lateinit var plusView: TextView
+    private lateinit var brandMetaView: TextView
     private lateinit var joinBtn: Button
     private lateinit var barTitle: TextView
     private lateinit var joinCard: LinearLayout
@@ -76,6 +78,10 @@ class MainActivity : Activity() {
     private lateinit var avatarRing: View
     private lateinit var themeBarView: LinearLayout
     private lateinit var themeBarSubtitle: TextView
+    private lateinit var digitalPanel: LinearLayout
+    private lateinit var digitalHeader: TextView
+    private lateinit var digitalReady: TextView
+    private lateinit var digitalLine: View
     private val featureChips = mutableListOf<TextView>()
     private val dotViews = mutableListOf<View>()
 
@@ -182,16 +188,48 @@ class MainActivity : Activity() {
             repeatCount = android.animation.ObjectAnimator.INFINITE
             start()
         }
+        // Approved compact brand lock-up: aesthetic gradient words + separate digital plus.
+        val brandRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            contentDescription = "Smart Party Plus"
+        }
         titleView = GradientText(this).apply {
-            text = "Smart Party Plus"
+            text = "Smart Party"
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             textSize = 32f
             gravity = Gravity.CENTER
             setSingleLine(true)
-            setAutoSizeTextTypeUniformWithConfiguration(23, 32, 1,
+            letterSpacing = -0.03f
+            setAutoSizeTextTypeUniformWithConfiguration(25, 32, 1,
                 android.util.TypedValue.COMPLEX_UNIT_SP)
         }
-        joinCard.addView(titleView, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5); bottomMargin = dp(5) })
+        brandRow.addView(titleView, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)))
+        plusView = TextView(this).apply {
+            text = "+"
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            textSize = 26f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            rotation = 2f
+            elevation = dp(3).toFloat()
+        }
+        brandRow.addView(plusView, lp(dp(34), dp(34)).apply { leftMargin = dp(7); topMargin = dp(2) })
+        joinCard.addView(brandRow, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply {
+            topMargin = dp(2)
+        })
+
+        brandMetaView = TextView(this).apply {
+            text = "WATCH  •  LISTEN  •  TOGETHER"
+            textSize = 7f
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
+            letterSpacing = .14f
+        }
+        joinCard.addView(brandMetaView, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(13)).apply {
+            bottomMargin = dp(3)
+        })
 
         // Badge (glow ke saath)
         badgeView = TextView(this).apply {
@@ -276,9 +314,12 @@ class MainActivity : Activity() {
         }
         joinCard.addView(joinBtn, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(12) })
 
-        // Feature chips
-        joinCard.addView(chipFlow(listOf("▶️ YouTube", "🎞️ MP4/MP3", "📋 Playlist", "🖼️ DP", "↩️ Reply", "🔄 Sync", "🚪 Rooms")),
-            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+        // Approved Party-Lobby inspired digital matrix. Exactly two compact rows (4 + 3),
+        // replacing the old wrapping pills without making the first page taller.
+        joinCard.addView(buildDigitalFeatures(),
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(12)
+            })
 
         renderAvatar()
 
@@ -318,6 +359,15 @@ class MainActivity : Activity() {
         }
         titleView.grad = t.j
         titleView.applyShader()
+        plusView.setTextColor(t.buttonText)
+        plusView.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, t.j).apply {
+            cornerRadii = floatArrayOf(
+                dp(10).toFloat(), dp(10).toFloat(), dp(4).toFloat(), dp(4).toFloat(),
+                dp(10).toFloat(), dp(10).toFloat(), dp(4).toFloat(), dp(4).toFloat()
+            )
+            setStroke(dp(1), withAlpha(t.focus, 180))
+        }
+        brandMetaView.setTextColor(withAlpha(t.accentText, 190))
         joinBtn.setTextColor(t.buttonText)
         joinBtn.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
             if (t.key == "purple") t.j else t.fill2).apply {
@@ -333,11 +383,18 @@ class MainActivity : Activity() {
             cornerRadius = dp(14).toFloat(); setStroke(dp(1), t.inputStroke)
         }
         themeBarSubtitle.setTextColor(t.accentText)
-        featureChips.forEach { chip ->
-            chip.background = GradientDrawable().apply {
-                setColor(t.chip); cornerRadius = dp(20).toFloat(); setStroke(dp(1), t.itemStroke)
-            }
+        digitalPanel.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, t.menu).apply {
+            cornerRadius = dp(15).toFloat()
+            setStroke(dp(1), withAlpha(t.focus, 66))
         }
+        digitalHeader.setTextColor(withAlpha(t.accentText, 205))
+        digitalReady.setTextColor(hex("#76ffd8"))
+        featureChips.forEachIndexed { index, chip ->
+            chip.background = digitalChipBackground(t, index)
+        }
+        digitalLine.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(Color.TRANSPARENT, withAlpha(t.focus, 100),
+                withAlpha(t.j.last(), 100), Color.TRANSPARENT))
         badgeView.setTextColor(t.accentText)
         badgeView.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
             intArrayOf(withAlpha(t.j.first(), 46), withAlpha(t.j.last(), 46))).apply {
@@ -753,25 +810,83 @@ class MainActivity : Activity() {
         setOnFocusChangeListener { view, focused -> applyMainInput(view as EditText, focused) }
     }
 
-    private fun chipFlow(items: List<String>): FlowLayout {
-        val flow = FlowLayout(this)
+    private fun buildDigitalFeatures(): LinearLayout {
         featureChips.clear()
-        for (s in items) {
-            val chip = TextView(this).apply {
-                text = s
-                textSize = 12f
-                setTextColor(Color.WHITE)
-                setSingleLine(true)
-                setPadding(dp(12), dp(6), dp(12), dp(6))
-                background = roundBox(Color.argb(31, 255, 255, 255), Color.argb(38, 255, 255, 255), 20, 1)
-            }
-            featureChips.add(chip)
-            flow.addView(chip, ViewGroup.MarginLayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(dp(3), dp(3), dp(3), dp(3))
-            })
+        digitalPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            clipChildren = false
         }
-        return flow
+
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        digitalHeader = TextView(this).apply {
+            text = "PARTY SYSTEMS  //  DIGITAL MATRIX"
+            textSize = 7f
+            includeFontPadding = false
+            setSingleLine(true)
+            setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
+            letterSpacing = .08f
+        }
+        head.addView(digitalHeader, LinearLayout.LayoutParams(0, dp(12), 1f))
+        digitalReady = TextView(this).apply {
+            text = "● READY"
+            textSize = 7f
+            includeFontPadding = false
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setSingleLine(true)
+            setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
+            letterSpacing = .06f
+        }
+        head.addView(digitalReady, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(12)))
+        digitalPanel.addView(head, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(12)))
+
+        fun chip(label: String): TextView = TextView(this).apply {
+            text = label
+            textSize = 7.5f
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setSingleLine(true)
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setTextColor(Color.WHITE)
+            setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
+            setPadding(dp(3), 0, dp(3), 0)
+            contentDescription = label.replace("▶", "YouTube").replace("♫", "Media")
+            featureChips.add(this)
+        }
+
+        fun row(labels: List<String>): LinearLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            labels.forEachIndexed { index, label ->
+                addView(chip(label), LinearLayout.LayoutParams(0, dp(27), 1f).apply {
+                    if (index > 0) leftMargin = dp(4)
+                })
+            }
+        }
+
+        digitalPanel.addView(row(listOf("▶ YOUTUBE", "♫ MP4/MP3", "☷ PLAYLIST", "◎ DP")),
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(27)).apply { topMargin = dp(4) })
+        digitalPanel.addView(row(listOf("↩ SWIPE REPLY", "⌁ LIVE SYNC", "⌂ ROOMS")),
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(27)).apply { topMargin = dp(4) })
+        digitalLine = View(this)
+        digitalPanel.addView(digitalLine, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+            topMargin = dp(6)
+        })
+        return digitalPanel
     }
+
+    private fun digitalChipBackground(t: WpTheme, index: Int): GradientDrawable =
+        GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            intArrayOf(withAlpha(t.chip, 235), withAlpha(t.bg.last(), 235))).apply {
+            cornerRadii = floatArrayOf(
+                dp(5).toFloat(), dp(5).toFloat(), dp(10).toFloat(), dp(10).toFloat(),
+                dp(5).toFloat(), dp(5).toFloat(), dp(10).toFloat(), dp(10).toFloat()
+            )
+            setStroke(dp(1), withAlpha(if (index % 2 == 0) t.focus else t.j.last(), 74))
+        }
 
     private fun roundBox(fill: Int, stroke: Int, radiusDp: Int, strokeDp: Int): GradientDrawable =
         GradientDrawable().apply {
@@ -796,7 +911,9 @@ class MainActivity : Activity() {
 
     /** Website ka logo: 5 rangeeli bars, CSS wpWave jaisi wave animation. */
     inner class LogoView(ctx: Context) : View(ctx) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+        private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
         private val bars = listOf(
             floatArrayOf(2.4f, 8f, 13f, 0f), floatArrayOf(6.7f, 5f, 16f, 1f),
             floatArrayOf(11f, 2.6f, 18.4f, 2f), floatArrayOf(15.3f, 6.4f, 14.6f, 1f),
@@ -827,8 +944,32 @@ class MainActivity : Activity() {
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val s = width / 24f
+            val inset = dp(2).toFloat()
+            val ring = RectF(inset, inset, width - inset, height - inset)
+            ringPaint.strokeWidth = dp(1).toFloat().coerceAtLeast(1f)
+            ringPaint.color = withAlpha(colors[0], 115)
+            canvas.save()
+            canvas.rotate(t / 18f, width / 2f, height / 2f)
+            canvas.drawArc(ring, -72f, 214f, false, ringPaint)
+            ringPaint.color = withAlpha(colors[2], 105)
+            canvas.drawArc(ring, 132f, 142f, false, ringPaint)
+            canvas.restore()
+
+            val inner = RectF(dp(7).toFloat(), dp(7).toFloat(),
+                width - dp(7).toFloat(), height - dp(7).toFloat())
+            ringPaint.color = withAlpha(colors[1], 62)
+            canvas.drawOval(inner, ringPaint)
+            dotPaint.color = colors[0]
+            canvas.drawCircle(width * .29f, height * .13f, dp(2).toFloat(), dotPaint)
+
+            // Bars stay inside the orbit; independent paints prevent redraw alpha/style leaks.
+            val s = width / 32f
+            val dx = (width - 24f * s) / 2f
+            val dy = (height - 24f * s) / 2f
             val r = 1.35f * s
+            barPaint.alpha = 255
+            barPaint.style = Paint.Style.FILL
+            barPaint.shader = null
             for ((i, b) in bars.withIndex()) {
                 val ph = (t + delays[i]) % 1800f
                 val f = if (ph <= 900f) ph / 900f else (1800f - ph) / 900f
@@ -836,8 +977,9 @@ class MainActivity : Activity() {
                 val scale = 0.45f + 0.55f * e
                 val bottom = b[1] + b[2]
                 val top = bottom - b[2] * scale
-                paint.color = colors[b[3].toInt()]
-                canvas.drawRoundRect(b[0] * s, top * s, (b[0] + 2.7f) * s, bottom * s, r, r, paint)
+                barPaint.color = colors[b[3].toInt()]
+                canvas.drawRoundRect(dx + b[0] * s, dy + top * s,
+                    dx + (b[0] + 2.7f) * s, dy + bottom * s, r, r, barPaint)
             }
         }
     }
@@ -885,88 +1027,4 @@ class GlowDrawable(private val glowColor: Int, private val blurPx: Float, privat
     override fun setColorFilter(colorFilter: ColorFilter?) {}
     @Suppress("OVERRIDE_DEPRECATION")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
-}
-
-/** Chips ko line-by-line wrap karta hai aur har line ko center mein rakhta hai (CSS flex-wrap jaisa). */
-class FlowLayout(ctx: android.content.Context) : ViewGroup(ctx) {
-    private val gap = (6 * resources.displayMetrics.density).toInt()
-
-    override fun generateDefaultLayoutParams(): LayoutParams =
-        MarginLayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
-
-    override fun generateLayoutParams(attrs: android.util.AttributeSet?): LayoutParams =
-        MarginLayoutParams(context, attrs)
-
-    override fun generateLayoutParams(p: LayoutParams?): LayoutParams =
-        MarginLayoutParams(p)
-
-    override fun checkLayoutParams(p: LayoutParams?): Boolean = p is MarginLayoutParams
-
-    private fun childW(c: View): Int {
-        val lp = c.layoutParams as MarginLayoutParams
-        return c.measuredWidth + lp.leftMargin + lp.rightMargin
-    }
-
-    private fun childH(c: View): Int {
-        val lp = c.layoutParams as MarginLayoutParams
-        return c.measuredHeight + lp.topMargin + lp.bottomMargin
-    }
-
-    private fun split(maxW: Int): List<Triple<Int, Int, List<View>>> {
-        val out = mutableListOf<Triple<Int, Int, List<View>>>()
-        var cur = mutableListOf<View>()
-        var curW = 0
-        var curH = 0
-        for (i in 0 until childCount) {
-            val c = getChildAt(i)
-            if (c.visibility == GONE) continue
-            val cw = childW(c)
-            if (cur.isNotEmpty() && curW + gap + cw > maxW) {
-                out.add(Triple(curW, curH, cur))
-                cur = mutableListOf()
-                curW = 0
-                curH = 0
-            }
-            if (cur.isNotEmpty()) curW += gap
-            curW += cw
-            curH = maxOf(curH, childH(c))
-            cur.add(c)
-        }
-        if (cur.isNotEmpty()) out.add(Triple(curW, curH, cur))
-        return out
-    }
-
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val width = MeasureSpec.getSize(widthMeasureSpec)
-        val inner = width - paddingLeft - paddingRight
-        for (i in 0 until childCount) {
-            val c = getChildAt(i)
-            if (c.visibility == GONE) continue
-            measureChildWithMargins(c, MeasureSpec.makeMeasureSpec(inner, MeasureSpec.AT_MOST), 0,
-                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED), 0)
-        }
-        val lines = split(inner)
-        var h = paddingTop + paddingBottom
-        for ((idx, line) in lines.withIndex()) {
-            h += line.second
-            if (idx > 0) h += gap
-        }
-        setMeasuredDimension(width, resolveSize(h, heightMeasureSpec))
-    }
-
-    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
-        val maxW = (r - l) - paddingLeft - paddingRight
-        var y = paddingTop
-        for (line in split(maxW)) {
-            var x = paddingLeft + (maxW - line.first) / 2
-            for (c in line.third) {
-                val lp = c.layoutParams as MarginLayoutParams
-                val left = x + lp.leftMargin
-                val top = y + lp.topMargin
-                c.layout(left, top, left + c.measuredWidth, top + c.measuredHeight)
-                x += childW(c) + gap
-            }
-            y += line.second + gap
-        }
-    }
 }

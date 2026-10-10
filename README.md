@@ -5,6 +5,7 @@ WebView ke baghair Kotlin/Android Views implementation.
 Ab shamil hai:
 
 - Native first/join page, Messages/Calls aur bottom navigation
+- Compact aesthetic **Smart Party +** first-page brand lock-up with orbit equalizer and a fixed two-row Party Lobby-style digital feature matrix
 - Pixel-matched native Party Lobby v48
 - Lobby ke **Enter Party** par first-page ke saved name, room aur selected tower se actual Room join
 - Native Party Room UI aur Rave-size full-width `16:9` MPV player
