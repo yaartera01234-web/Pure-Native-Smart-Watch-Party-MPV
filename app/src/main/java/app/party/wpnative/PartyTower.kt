@@ -50,7 +50,8 @@ data class PartyMessage(
     val mediaRef: String,
     val mediaIv: String,
     val dur: Int,
-    val wave: String
+    val wave: String,
+    val mediaUrl: String = ""
 )
 
 /** Website-compatible retained playback state and transient command payloads. */
@@ -201,6 +202,7 @@ object PartyTower {
     private val encryptedBlobs = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
     private val deliveredMedia = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val reactions = HashMap<String, LinkedHashMap<String, LinkedHashSet<String>>>()
+    private val seenReactionEvents = LinkedHashSet<String>()
     private var queue = mutableListOf<PartyQueueItem>()
     private var queueIndex = -1
     @Volatile private var playbackState: PartyPlaybackState? = null
@@ -390,6 +392,7 @@ object PartyTower {
         replyMid: String = "",
         type: String = "text",
         media: ByteArray? = null,
+        mediaUrl: String = "",
         dur: Int = 0,
         wave: String = ""
     ): String? {
@@ -415,7 +418,8 @@ object PartyTower {
             mediaRef = if (media != null && media.isNotEmpty()) "mqtt:$mid" else "",
             mediaIv = "",
             dur = dur,
-            wave = wave
+            wave = wave,
+            mediaUrl = if (type == "gif") mediaUrl.takeIf { it.startsWith("https://") }.orEmpty() else ""
         )
         messages[mid] = local
         trimRetainedIfNeeded()
@@ -442,6 +446,13 @@ object PartyTower {
                     if (type == "voice") {
                         put("aud", mediaRef); put("iv", mediaIv); put("dur", dur); put("wave", wave)
                     }
+                    if (type == "gif") {
+                        val gifRef = mediaRef.ifBlank {
+                            mediaUrl.takeIf { it.startsWith("https://") }.orEmpty()
+                        }
+                        put("gif", gifRef)
+                        if (mediaRef.isNotBlank()) put("iv", mediaIv)
+                    }
                 }
                 val envelope = encryptJson(plain).toString().toByteArray(StandardCharsets.UTF_8)
                 // Website/current members ko live topic; native late join ko retained per-message topic.
@@ -460,7 +471,10 @@ object PartyTower {
             put("t", "react"); put("mid", mid); put("e", emoji); put("from", memberId)
             put("by", myName); put("id", randomId())
         }
-        publish("$base/react", ev.toString().toByteArray(), false)
+        val bytes = ev.toString().toByteArray(StandardCharsets.UTF_8)
+        // Optimistic local tower-state; broker ka apna QoS1 echo event-id se dedupe hoga.
+        handleReaction(bytes)
+        publish("$base/react", bytes, false)
     }
 
     /** Real Room typing pulse; no demo/fake typer is ever generated. */
@@ -817,7 +831,13 @@ object PartyTower {
         val reply = o.optJSONObject("reply")
         val img = o.optString("img")
         val aud = o.optString("aud")
-        val type = when { img.isNotBlank() -> "photo"; aud.isNotBlank() -> "voice"; else -> "text" }
+        val gif = o.optString("gif")
+        val type = when {
+            img.isNotBlank() -> "photo"
+            aud.isNotBlank() -> "voice"
+            gif.isNotBlank() -> "gif"
+            else -> "text"
+        }
         return PartyMessage(
             mid = o.optString("mid").ifBlank { randomId() },
             senderId = o.optString("senderId"),
@@ -830,10 +850,16 @@ object PartyTower {
             time = o.optString("time"),
             ts = o.optLong("ts", System.currentTimeMillis()),
             type = type,
-            mediaRef = if (type == "photo") img else if (type == "voice") aud else "",
+            mediaRef = when (type) {
+                "photo" -> img
+                "voice" -> aud
+                "gif" -> gif.takeIf { it.startsWith("mqtt:") }.orEmpty()
+                else -> ""
+            },
             mediaIv = o.optString("iv"),
             dur = o.optInt("dur"),
-            wave = o.optString("wave")
+            wave = o.optString("wave"),
+            mediaUrl = gif.takeIf { type == "gif" && it.startsWith("https://") }.orEmpty()
         )
     }
 
@@ -860,19 +886,31 @@ object PartyTower {
         if (o.optString("t") != "react") return
         val mid = o.optString("mid"); val emoji = o.optString("e"); val from = o.optString("from")
         if (mid.isBlank() || emoji.isBlank() || from.isBlank()) return
-        val byEmoji = reactions.getOrPut(mid) { LinkedHashMap() }
-        // Ek member ki ek reaction: purani emoji se hatao, same emoji ho to toggle off.
-        val already = byEmoji[emoji]?.contains(from) == true
-        byEmoji.values.forEach { it.remove(from) }
-        if (!already) byEmoji.getOrPut(emoji) { LinkedHashSet() }.add(from)
-        byEmoji.entries.removeAll { it.value.isEmpty() }
+        val eventId = o.optString("id")
+        if (eventId.isNotBlank()) synchronized(seenReactionEvents) {
+            if (!seenReactionEvents.add(eventId)) return
+            while (seenReactionEvents.size > 500) {
+                seenReactionEvents.remove(seenReactionEvents.first())
+            }
+        }
+        synchronized(reactions) {
+            val byEmoji = reactions.getOrPut(mid) { LinkedHashMap() }
+            // Ek member ki ek reaction: purani emoji se hatao, same emoji ho to toggle off.
+            val already = byEmoji[emoji]?.contains(from) == true
+            byEmoji.values.forEach { it.remove(from) }
+            if (!already) byEmoji.getOrPut(emoji) { LinkedHashSet() }.add(from)
+            byEmoji.entries.removeAll { it.value.isEmpty() }
+        }
         emitReaction(mid)
     }
 
     private fun emitReaction(mid: String) {
-        val summary = linkedMapOf<String, Pair<Int, Boolean>>()
-        reactions[mid]?.forEach { (emoji, ids) ->
-            if (ids.isNotEmpty()) summary[emoji] = ids.size to ids.contains(memberId)
+        val summary = synchronized(reactions) {
+            linkedMapOf<String, Pair<Int, Boolean>>().apply {
+                reactions[mid]?.forEach { (emoji, ids) ->
+                    if (ids.isNotEmpty()) put(emoji, ids.size to ids.contains(memberId))
+                }
+            }
         }
         main.post { listener?.onPartyReactions(mid, summary) }
     }
@@ -1052,12 +1090,13 @@ object PartyTower {
     private fun resetTransient() {
         members.clear(); typingUsers.clear(); lastTypingSentAt = 0L
         messages.clear(); messageJson.clear(); encryptedBlobs.clear()
-        deliveredMedia.clear(); reactions.clear(); queue.clear(); queueIndex = -1
+        deliveredMedia.clear(); synchronized(reactions) { reactions.clear() }; queue.clear(); queueIndex = -1
         synchronized(playbackLock) {
             playbackState = null; playbackCheckpoint = null; lastPlaybackPayload = ""
             stateRevisionCounter = 0L
         }
         synchronized(seenPlaybackCommands) { seenPlaybackCommands.clear() }
+        synchronized(seenReactionEvents) { seenReactionEvents.clear() }
     }
 
     private fun cleanRoom(raw: String): String = raw.trim().replace(Regex("[#+\\u0000]"), "").take(20).ifBlank { "main" }

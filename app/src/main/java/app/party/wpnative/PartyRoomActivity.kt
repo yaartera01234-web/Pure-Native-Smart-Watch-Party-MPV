@@ -35,6 +35,7 @@ import android.view.ViewGroup
 import android.view.Window
 import android.view.animation.LinearInterpolator
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputContentInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -1027,8 +1028,8 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     }
 
     /**
-     * Original room composer: emoji row typing box ke upar. GIF jaan-boojh kar hata
-     * diya; photo/mic bilkul DM ke WpIcon + gradient dimensions mein hain.
+     * Original room composer: emoji row typing box ke upar; Gboard/Samsung GIF isi
+     * text field se selected Party Tower ke encrypted chat route par jati hai.
      */
     private fun buildComposer(): View {
         val box = LinearLayout(this).apply {
@@ -1057,7 +1058,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
                 setOnClickListener { appendPartyEmoji(e) }
             }, lp(dp(24f), dp(36f)).apply { rightMargin = dp(6f) })
         }
-        // GIF nahi: baad mein keyboard/Gboard se direct send setup hoga.
+        // Alag GIF button nahi: Gboard/Samsung ke GIF tab se direct send hoti hai.
         emojis.addView(partyMediaIcon("photo", palette.fill2) { openPartyPhotoPicker() },
             lp(dp(36f), dp(36f)).apply { leftMargin = dp(4f) })
         emojis.addView(partyMediaIcon("mic", palette.fill2) { startPartyVoice() },
@@ -1069,7 +1070,8 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        partyInput = EditText(this).apply {
+        partyInput = KeyboardGifEditText(this).apply {
+            onGifContent = { content -> receivePartyKeyboardGif(content); true }
             hint = "Message likho..."
             setHintTextColor(Color.argb(140, 255, 255, 255))
             setTextColor(Color.WHITE)
@@ -1171,6 +1173,72 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
                 ?.showSoftInput(partyInput, InputMethodManager.SHOW_IMPLICIT)
         }
+    }
+
+    /** Gboard/Samsung GIF: URL-first; local-only payload tower ke liye max 300 KiB. */
+    private fun receivePartyKeyboardGif(content: InputContentInfo) {
+        if (!PartyTower.isConnected()) {
+            try { content.releasePermission() } catch (_: Throwable) { }
+            Toast.makeText(this, "Tower connect nahi — GIF nahi gayi", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val directUrl = content.linkUri?.toString()?.takeIf(::isDirectPartyGifUrl).orEmpty()
+        Toast.makeText(this, "GIF tower ke liye taiyar ho rahi hai…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val bytes = try {
+                contentResolver.openInputStream(content.contentUri)?.use { inputStream ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buf = ByteArray(16 * 1024)
+                    var total = 0
+                    var tooLarge = false
+                    while (true) {
+                        val n = inputStream.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > 8 * 1024 * 1024) { tooLarge = true; break }
+                        out.write(buf, 0, n)
+                    }
+                    if (tooLarge) null else out.toByteArray().takeIf(GifMovieView::isGif)
+                }
+            } catch (_: Throwable) { null }
+            try { content.releasePermission() } catch (_: Throwable) { }
+            runOnUiThread {
+                when {
+                    isFinishing -> Unit
+                    directUrl.isNotBlank() -> sendPartyGif(bytes, directUrl)
+                    bytes == null -> Toast.makeText(this,
+                        "Ye keyboard GIF share nahi kar saka — doosri GIF try karein", Toast.LENGTH_LONG).show()
+                    bytes.size > 300 * 1024 -> Toast.makeText(this,
+                        "GIF tower limit se bari hai — chhoti GIF choose karein", Toast.LENGTH_LONG).show()
+                    else -> sendPartyGif(bytes, "")
+                }
+            }
+        }.start()
+    }
+
+    private fun isDirectPartyGifUrl(raw: String): Boolean = try {
+        val uri = Uri.parse(raw)
+        uri.scheme.equals("https", true) &&
+            (uri.path.orEmpty().lowercase(Locale.ROOT).endsWith(".gif") ||
+                raw.substringBefore('?').lowercase(Locale.ROOT).endsWith(".gif"))
+    } catch (_: Throwable) { false }
+
+    private fun sendPartyGif(bytes: ByteArray?, directUrl: String) {
+        val reply = partyReplyTo
+        val towerBytes = if (directUrl.isBlank()) bytes else null
+        val mid = PartyTower.sendMessage(
+            text = "",
+            replyName = reply?.let { if (it.own) "You" else messageName(it) }.orEmpty(),
+            replyText = reply?.let(::partyMessageLabel).orEmpty(),
+            replyMid = reply?.fid.orEmpty(),
+            type = "gif", media = towerBytes, mediaUrl = directUrl
+        )
+        if (mid == null) {
+            Toast.makeText(this, "Tower connect nahi — GIF nahi gayi", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (bytes != null) MediaCache.save(this, "party_$mid", bytes)
+        clearPartyReply()
     }
 
     private fun openPartyPhotoPicker() {
@@ -1292,7 +1360,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     private fun partySig(m: Msg): String =
         m.fid + "|" + m.senderName + "|" + m.senderColor + "|" + m.text + "|" +
             m.replyName + "|" + m.replyText + "|" + m.time + "|" + m.type + "|" + m.mediaKey + "|" +
-            (m.mediaKey.isNotBlank() && MediaCache.has(this, m.mediaKey)) + "|" +
+            m.mediaUrl + "|" + (m.mediaKey.isNotBlank() && MediaCache.has(this, m.mediaKey)) + "|" +
             m.rx.entries.joinToString(",") { "${it.key}:${it.value}:${m.rxCounts[it.key] ?: 1}" }
 
     private fun scrollPartyBottom() {
@@ -1374,6 +1442,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     private fun partyMessageLabel(m: Msg): String = when (m.type) {
         "photo" -> "🖼️ Photo"
+        "gif" -> "🎞️ GIF"
         "voice" -> "🎙️ Voice note"
         else -> m.text
     }
@@ -1564,14 +1633,16 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         if (m.fid.isBlank() || !PartyTower.isConnected()) {
             Toast.makeText(this, "Tower connect nahi", Toast.LENGTH_SHORT).show(); return
         }
-        val adding = m.rx[emoji] != true
+        // Sender bhi tower echo par fly karega; local + echo double animation nahi hogi.
         PartyTower.sendReaction(m.fid, emoji)
-        if (adding) flyPartyReaction(emoji)
     }
 
     /** DM ka Instagram-style 3-second flying reaction. */
     private fun flyPartyReaction(emoji: String) {
-        if (!::partyFlyLayer.isInitialized) return
+        if (!::partyFlyLayer.isInitialized || emoji.isBlank()) return
+        partyFlyLayer.visibility = View.VISIBLE
+        partyFlyLayer.bringToFront()
+        partyFlyLayer.elevation = dp(40).toFloat()
         val view = TextView(this).apply {
             text = emoji
             textSize = 30f
@@ -1674,6 +1745,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             replyName = message.replyName, replyText = message.replyText,
             fid = message.mid, type = message.type,
             mediaKey = if (message.type == "text") "" else "party_${message.mid}",
+            mediaUrl = message.mediaUrl,
             dur = message.dur, wave = message.wave,
             senderName = message.name, senderColor = message.color
         )
@@ -1705,12 +1777,18 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     override fun onPartyReactions(mid: String, values: Map<String, Pair<Int, Boolean>>) {
         val m = partyMsgs.firstOrNull { it.fid == mid } ?: return
+        // Har tower reaction event ek callback deta hai: count barhe to sender samet sab
+        // active members ke foreground overlay par wahi emoji fly kare.
+        val flying = values.entries.filter { (emoji, state) ->
+            state.first > (m.rxCounts[emoji] ?: 0)
+        }.map { it.key }
         m.rx.clear(); m.rxCounts.clear()
         values.forEach { (emoji, state) ->
             m.rx[emoji] = state.second
             m.rxCounts[emoji] = state.first
         }
         renderPartyThread()
+        flying.forEach { emoji -> window.decorView.post { flyPartyReaction(emoji) } }
     }
 
     override fun onPartyQueue(items: List<PartyQueueItem>, index: Int) {
