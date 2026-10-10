@@ -14,9 +14,9 @@
 | Cheez | Value |
 |---|---|
 | namespace / applicationId | `app.party.wpnative` |
-| minSdk / targetSdk | 24 / 35 |
+| minSdk / targetSdk | 26 / 35 |
 | compileSdk | 35 |
-| dependencies | **koi nahi** (sirf Android SDK + Kotlin stdlib) |
+| dependencies | AndroidX/Firebase/MQTT/native MPV + prefixed stripped WebRTC (UI phir bhi Kotlin Android Views hai) |
 | theme | `@android:style/Theme.Material.NoActionBar` |
 | UI banane ka tareeqa | poori UI Kotlin code se (koi XML layout nahi) |
 
@@ -100,13 +100,22 @@ base color: #05030d
 
 ---
 
-## 3. Abhi tak ka status
+## 3. Native voice call screen
 
-- [x] Join page
-- [x] Messages (inbox) + bottom bar + menus
-- [x] Calls page
-- [x] **Chat screen (design + demo features)** ← abhi ka kaam
-- [ ] Party page (agla step)
-- [ ] Asli chat / E2E (demo abhi in-memory)
-- [ ] Pins aur clear ko save karna
-- [ ] Bubble ke 12 style options
+- Sirf accepted Friend Code contact ke sath private 1-to-1 voice; video/group controls nahi.
+- Background: `#170d35 → #0b1027 → #03040b`; center avatar ke gird cyan/purple pulse rings aur voice bars.
+- Incoming controls: Decline red + Answer green. Connecting/outgoing: End. Active/reconnecting: Mute, End, Speaker/Earpiece.
+- Top `⌄` Activity ko minimize karta hai; foreground service/WebRTC call jari rehti aur baqi app screens par 62dp mini bar restore/controls deti hai.
+- Calls page real latest-100 history se direction, missed/result, date/time/duration dikhata hai aur phone button callback karta hai.
+- Connected built-in earpiece par hi proximity screen-off; ringing/connecting/reconnecting/speaker/wired/Bluetooth par off.
+
+## 4. Abhi tak ka status
+
+- [x] Join, Lobby aur live Party Room
+- [x] Native MPV023 player, retained playlist/playback aur Smart Music-style Room sync
+- [x] Firebase Friend Codes, requests aur durable direct chat/media
+- [x] Messages (inbox), Calls history, bottom bar aur saved menus/themes
+- [x] Private native WebRTC/Opus 1-to-1 voice calls, notifications, routing, reconnect aur summaries
+- [x] Chat/Room replies, reactions, photo, mic, paging, retained cache aur cleanup
+- [x] 12 bubble options aur approved theme coupling
+- [ ] DM GIF (deliberately end-of-project remaining item)

@@ -68,6 +68,7 @@ object CallNotify {
             .setPriority(Notification.PRIORITY_MAX)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .setAutoCancel(false)
             .setContentIntent(open)
             .setFullScreenIntent(open, true)
@@ -149,17 +150,32 @@ object IncomingCallController {
         if (signal.action != "invite") return
         val app = ctx.applicationContext
         val currentPending = PendingCallStore.get(app)
-        if (CallState.active() || (currentPending != null && currentPending.callId != signal.callId)) {
+        // The same encrypted invite can be observed again while its delete is in flight.
+        // It is idempotent—not a second call, and must never receive a false busy reply.
+        if (currentPending?.callId == signal.callId) {
+            present(app, currentPending)
+            return
+        }
+        if (CallState.active() || currentPending != null) {
             CallSignaling.send(app, signal.chatId, signal.fromCode, signal.callId, "busy")
             return
         }
-        if (currentPending?.callId == signal.callId) return
         val pending = PendingCall(signal.callId, signal.chatId, peerName, signal.fromCode,
             System.currentTimeMillis())
         PendingCallStore.save(app, pending)
-        CallState.update(CallSnapshot(signal.callId, signal.chatId, peerName, signal.fromCode,
+        present(app, pending)
+    }
+
+    /** Rebuild ringing/timeout after a normal process recreation. */
+    fun restore(ctx: Context) {
+        PendingCallStore.get(ctx)?.let { present(ctx.applicationContext, it) }
+    }
+
+    private fun present(app: Context, pending: PendingCall) {
+        CallState.update(CallSnapshot(pending.callId, pending.chatId, pending.peerName, pending.peerCode,
             outgoing = false, phase = CallPhase.INCOMING, status = "Incoming voice call"))
-        CallNotify.showIncoming(app, pending)
+        val remaining = (30_000L - (System.currentTimeMillis() - pending.at)).coerceAtLeast(0L)
+        if (remaining > 0L) CallNotify.showIncoming(app, pending)
         timeout?.let(handler::removeCallbacks)
         timeout = Runnable {
             val live = PendingCallStore.get(app)
@@ -168,7 +184,8 @@ object IncomingCallController {
             CallStore.add(app, CallRecord(pending.callId, pending.peerName, pending.peerCode,
                 pending.chatId, false, "missed", 0L, System.currentTimeMillis(), 0))
             PendingCallStore.clear(app); CallNotify.clearIncoming(app); CallState.clear()
-        }.also { handler.postDelayed(it, 30_000L) }
+            timeout = null
+        }.also { handler.postDelayed(it, remaining) }
     }
 
     fun accepted(ctx: Context, callId: String) {
@@ -185,6 +202,17 @@ object IncomingCallController {
         CallStore.add(ctx, CallRecord(pending.callId, pending.peerName, pending.peerCode,
             pending.chatId, false, "declined", 0L, System.currentTimeMillis(), 0))
         PendingCallStore.clear(ctx); CallNotify.clearIncoming(ctx); CallState.clear()
+    }
+
+    /** Caller hung up while this phone was still ringing. */
+    fun cancelled(ctx: Context, callId: String): Boolean {
+        val pending = PendingCallStore.get(ctx) ?: return false
+        if (pending.callId != callId) return false
+        timeout?.let(handler::removeCallbacks); timeout = null
+        CallStore.add(ctx, CallRecord(pending.callId, pending.peerName, pending.peerCode,
+            pending.chatId, false, "missed", 0L, System.currentTimeMillis(), 0))
+        PendingCallStore.clear(ctx); CallNotify.clearIncoming(ctx); CallState.clear()
+        return true
     }
 }
 

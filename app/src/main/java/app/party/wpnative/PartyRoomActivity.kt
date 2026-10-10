@@ -75,6 +75,12 @@ object PartyRoomRoute {
         from.overridePendingTransition(0, 0)
         return true
     }
+
+    /** Locally silence MPV while WebRTC owns call audio; never publishes Party commands. */
+    fun suppressAudioForVoiceCall(suppress: Boolean) {
+        val room = live?.get() ?: return
+        room.runOnUiThread { room.setVoiceCallAudioSuppressed(suppress) }
+    }
 }
 
 /**
@@ -142,6 +148,8 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     // ------------------------------------------------ native MPV / Rave player
     private lateinit var partyPlayer: PartyPlayerView
     private var mpvVideo: MpvVideoPlayer? = null
+    private var voiceCallAudioSuppressed = false
+    private var movieMutedBeforeVoiceCall = false
     private var currentMedia: PartyPlaybackMedia? = null
     private var currentMediaTitle = ""
     private var desiredPlaying = false
@@ -280,6 +288,10 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         window.decorView.animate().cancel()
         window.decorView.alpha = 1f
         if (::roomBackdrop.isInitialized) roomBackdrop.restoreColors()
+        val callPhase = CallState.current().phase
+        setVoiceCallAudioSuppressed(callPhase == CallPhase.CONNECTING ||
+            callPhase == CallPhase.ACTIVE || callPhase == CallPhase.RECONNECTING)
+        CallMiniBar.attach(this)
     }
 
     override fun onPause() {
@@ -1786,7 +1798,12 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             override fun onSeekTo(seconds: Double) = userSeekTo(seconds)
             override fun onSeekBy(seconds: Double) = userSeekBy(seconds)
             override fun onToggleMute() {
-                player.setMuted(!player.isMuted()); updatePlayerUi()
+                if (voiceCallAudioSuppressed) {
+                    player.setMuted(true)
+                    Toast.makeText(this@PartyRoomActivity, "Voice call ke dauran movie audio muted rahegi",
+                        Toast.LENGTH_SHORT).show()
+                } else player.setMuted(!player.isMuted())
+                updatePlayerUi()
             }
             override fun onFullscreen() = enterPlayerFullscreen()
             override fun onAudioTracks() = chooseInlineAudioTrack()
@@ -2102,6 +2119,22 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         val player = mpvVideo ?: return
         if (currentMedia == null) return
         if (player.loaded() && !player.isPaused()) userPausePlayback() else userPlayPlayback()
+    }
+
+    /**
+     * Call audio and movie audio must not compete. Muting is deliberately local: playback,
+     * retained timeline and sync continue, and no Party pause/seek packet is ever emitted.
+     */
+    internal fun setVoiceCallAudioSuppressed(suppress: Boolean) {
+        val player = mpvVideo ?: return
+        if (suppress) {
+            if (!voiceCallAudioSuppressed) movieMutedBeforeVoiceCall = player.isMuted()
+            voiceCallAudioSuppressed = true
+            player.setMuted(true)
+        } else if (voiceCallAudioSuppressed) {
+            voiceCallAudioSuppressed = false
+            player.setMuted(movieMutedBeforeVoiceCall)
+        }
     }
 
     private fun userPlayPlayback() {

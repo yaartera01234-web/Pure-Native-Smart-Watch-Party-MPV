@@ -163,6 +163,7 @@ class ChatActivity : Activity(), ChatHost {
 
     override fun onResume() {
         super.onResume()
+        CallMiniBar.attach(this)
         // Kisi aur screen (inbox) se ye friend hat gaya ho to chat khuli nahi rehni chahiye
         if (!Friends.has(this, peer)) { finish(); return }
         refreshStatus()

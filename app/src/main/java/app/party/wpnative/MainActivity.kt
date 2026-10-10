@@ -95,6 +95,11 @@ class MainActivity : Activity() {
         MediaCleanup.runIfDue(this)   // 3 din purani photo/voice Firestore+phone se hat jayen
     }
 
+    override fun onResume() {
+        super.onResume()
+        CallMiniBar.attach(this)
+    }
+
     /** Android 13+ par notification ki ijazat (push ke liye zaroori). */
     private fun askNotifyPermission() {
         if (android.os.Build.VERSION.SDK_INT < 33) return

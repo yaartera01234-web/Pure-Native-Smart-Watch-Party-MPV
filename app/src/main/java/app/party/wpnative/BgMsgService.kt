@@ -61,6 +61,7 @@ class BgMsgService : Service() {
         handler.postDelayed({ hideNote() }, 1300)
         handler.postDelayed({ hideNote() }, 2800)
 
+        IncomingCallController.restore(this)
         attach()
         handler.postDelayed(watchdog, 60000)
     }
@@ -94,10 +95,14 @@ class BgMsgService : Service() {
             if (p.code.isNotBlank() && !callRegs.containsKey(chatId)) {
                 try {
                     CallSignaling.listen(this, chatId, p.code) { signal ->
-                        if (signal.action == "invite") {
-                            IncomingCallController.receive(this, signal, p.name)
-                            true
-                        } else false
+                        when (signal.action) {
+                            "invite" -> {
+                                IncomingCallController.receive(this, signal, p.name)
+                                true
+                            }
+                            "cancel" -> IncomingCallController.cancelled(this, signal.callId)
+                            else -> false
+                        }
                     }?.let { callRegs[chatId] = it }
                 } catch (_: Throwable) { }
             }

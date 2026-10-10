@@ -129,9 +129,11 @@ object CallSignaling {
                                 val action = body.optString("a")
                                 val callId = body.optString("id")
                                 val nonce = body.optString("n")
+                                val innerTs = body.optLong("ts", -1L)
                                 val valid = body.optString("k") == "voice-call-v1" &&
                                     WpUser.normalizeFriendCode(body.optString("from")) == peer &&
                                     WpUser.normalizeFriendCode(body.optString("to")) == mine &&
+                                    body.optString("id") == doc.getString("callId") && innerTs == ts &&
                                     action in setOf("invite", "accept", "offer", "answer", "candidate",
                                         "decline", "busy", "unavailable", "cancel", "hangup") &&
                                     callId.isNotBlank() && nonce.isNotBlank()
@@ -141,7 +143,7 @@ object CallSignaling {
                                             action, body, ts, nonce))
                                     }.getOrDefault(false)
                                     if (consumed) doc.reference.delete()
-                                }
+                                } else doc.reference.delete()
                             } catch (_: Throwable) {
                                 // Keep an undecryptable packet until expiry; it may belong to a
                                 // temporarily mismatched/legacy identity and must never crash chat.

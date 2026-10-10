@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -81,6 +82,16 @@ class VoiceCallService : Service() {
     private var focusRequest: AudioFocusRequest? = null
     private var proximity: PowerManager.WakeLock? = null
     private var selectedRoute = AudioDeviceInfo.TYPE_UNKNOWN
+    private var routeCallbackRegistered = false
+    private val routeCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) = refreshRoute()
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) = refreshRoute()
+        private fun refreshRoute() = main.post {
+            if (!ending && CallState.active()) {
+                applyAudioRoute(); updateProximity()
+            }
+        }
+    }
     private var tone: ToneGenerator? = null
     private var ringTask: Runnable? = null
     private var timeoutTask: Runnable? = null
@@ -97,6 +108,7 @@ class VoiceCallService : Service() {
     private var outgoing = false
     private var startedAt = 0L
     private var inviteSent = false
+    private var lastIceRestartAt = 0L
     private var ending = false
     private var muted = false
     private var speaker = false
@@ -110,13 +122,14 @@ class VoiceCallService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_OUTGOING -> if (!CallState.active() || CallState.current().callId == intent.getStringExtra(EXTRA_CALL)) {
+            ACTION_OUTGOING -> if (!CallState.active()) {
                 load(intent, isOutgoing = true); beginOutgoing()
             }
-            ACTION_ANSWER -> {
+            ACTION_ANSWER -> if (!CallState.active() || CallState.current().phase == CallPhase.INCOMING) {
                 load(intent, isOutgoing = false); beginAnswer()
             }
-            ACTION_END -> endLocal("ended", notifyPeer = true)
+            ACTION_END -> endLocal(if (outgoing && startedAt == 0L) "cancelled" else "ended",
+                notifyPeer = true)
             ACTION_MUTE -> toggleMute()
             ACTION_SPEAKER -> toggleSpeaker()
         }
@@ -195,7 +208,7 @@ class VoiceCallService : Service() {
             "decline" -> endLocal("declined", false)
             "busy" -> endLocal("busy", false)
             "unavailable" -> endLocal("unavailable", false)
-            "cancel" -> endLocal(if (outgoing) "cancelled" else "missed", false)
+            "cancel" -> endLocal("cancelled", false)
             "hangup" -> endLocal("ended", false)
         }
     }
@@ -218,6 +231,7 @@ class VoiceCallService : Service() {
             .setUseStereoInput(false).setUseStereoOutput(false)
             .createAudioDeviceModule()
         val madeFactory = PeerConnectionFactory.builder().setAudioDeviceModule(module).createPeerConnectionFactory()
+        audioModule = module; factory = madeFactory
         val servers = listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
@@ -226,6 +240,8 @@ class VoiceCallService : Service() {
             PeerConnection.IceServer.builder("turn:openrelay.metered.ca:80")
                 .setUsername("openrelayproject").setPassword("openrelayproject").createIceServer(),
             PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443?transport=tcp")
+                .setUsername("openrelayproject").setPassword("openrelayproject").createIceServer(),
+            PeerConnection.IceServer.builder("turns:openrelay.metered.ca:443?transport=tcp")
                 .setUsername("openrelayproject").setPassword("openrelayproject").createIceServer()
         )
         val config = PeerConnection.RTCConfiguration(servers).apply {
@@ -235,6 +251,7 @@ class VoiceCallService : Service() {
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
         }
         val pc = madeFactory.createPeerConnection(config, observer) ?: return false
+        peerConnection = pc
         val constraints = MediaConstraints().apply {
             mandatory += MediaConstraints.KeyValuePair("googEchoCancellation", "true")
             mandatory += MediaConstraints.KeyValuePair("googAutoGainControl", "true")
@@ -242,11 +259,11 @@ class VoiceCallService : Service() {
             mandatory += MediaConstraints.KeyValuePair("googHighpassFilter", "true")
         }
         val madeSource = madeFactory.createAudioSource(constraints)
+        source = madeSource
         val track = madeFactory.createAudioTrack("wp-audio-$callId", madeSource)
         pc.addTransceiver(track, RtpTransceiver.RtpTransceiverInit(
             RtpTransceiver.RtpTransceiverDirection.SEND_RECV))
-        audioModule = module; factory = madeFactory; peerConnection = pc
-        source = madeSource; localTrack = track
+        localTrack = track
         true
     } catch (_: Throwable) { false }
 
@@ -351,8 +368,9 @@ class VoiceCallService : Service() {
     }
 
     private fun connected() = main.post {
-        if (ending || startedAt > 0L) return@post
-        startedAt = System.currentTimeMillis(); cancelTimeout(); stopRingback()
+        if (ending) return@post
+        if (startedAt <= 0L) startedAt = System.currentTimeMillis()
+        cancelTimeout(); stopRingback(); applyAudioRoute()
         CallState.mutate { it.copy(phase = CallPhase.ACTIVE, startedAt = startedAt, status = "Connected") }
         updateNotification(); updateProximity()
     }
@@ -360,7 +378,18 @@ class VoiceCallService : Service() {
     private fun reconnecting() = main.post {
         if (ending || startedAt <= 0L) return@post
         CallState.mutate { it.copy(phase = CallPhase.RECONNECTING, status = "Reconnecting…") }
-        updateNotification()
+        updateNotification(); updateProximity()
+        // The caller is the deterministic renegotiation owner, preventing offer glare while
+        // still recovering from Wi-Fi/mobile handoffs that need a fresh ICE generation.
+        if (outgoing && System.currentTimeMillis() - lastIceRestartAt > 4_000L) {
+            lastIceRestartAt = System.currentTimeMillis()
+            rtc.execute {
+                runCatching { peerConnection?.restartIce() }
+                if (!ending && peerConnection?.signalingState() == PeerConnection.SignalingState.STABLE) {
+                    createOffer()
+                }
+            }
+        }
         armTimeout(12_000L) { endLocal("failed", true) }
     }
 
@@ -377,6 +406,7 @@ class VoiceCallService : Service() {
     }
 
     private fun configureCallAudio() {
+        PartyRoomRoute.suppressAudioForVoiceCall(true)
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         val attrs = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
@@ -385,33 +415,52 @@ class VoiceCallService : Service() {
                 .setAudioAttributes(attrs).setOnAudioFocusChangeListener { }.build()
             audioManager.requestAudioFocus(focusRequest!!)
         }
+        if (!routeCallbackRegistered) {
+            runCatching { audioManager.registerAudioDeviceCallback(routeCallback, main) }
+                .onSuccess { routeCallbackRegistered = true }
+        }
         applyAudioRoute()
     }
 
+    private fun handsFree(type: Int): Boolean = type in setOf(
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET,
+        AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE)
+
     private fun applyAudioRoute() {
+        selectedRoute = AudioDeviceInfo.TYPE_UNKNOWN
         if (Build.VERSION.SDK_INT >= 31) {
-            val devices = audioManager.availableCommunicationDevices
-            val preferred = if (speaker) {
-                devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-            } else {
-                devices.firstOrNull { it.type in setOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-                    AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADSET,
-                    AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_USB_HEADSET) }
-                    ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
-            }
-            if (preferred != null && runCatching { audioManager.setCommunicationDevice(preferred) }.getOrDefault(false)) {
-                selectedRoute = preferred.type
+            // BLUETOOTH_CONNECT can be denied independently of microphone permission, so every
+            // route query/change is guarded. Unknown is intentionally proximity-safe (screen on).
+            runCatching {
+                val devices = audioManager.availableCommunicationDevices
+                val preferred = if (speaker) {
+                    devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                } else {
+                    devices.firstOrNull { handsFree(it.type) }
+                        ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+                }
+                if (preferred != null && audioManager.setCommunicationDevice(preferred)) {
+                    selectedRoute = preferred.type
+                } else {
+                    selectedRoute = audioManager.communicationDevice?.type ?: AudioDeviceInfo.TYPE_UNKNOWN
+                }
             }
         } else {
             @Suppress("DEPRECATION")
             audioManager.isSpeakerphoneOn = speaker
-            selectedRoute = if (speaker) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+            selectedRoute = if (speaker) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else {
+                runCatching {
+                    audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                        .firstOrNull { handsFree(it.type) }?.type
+                }.getOrNull() ?: AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+            }
         }
     }
 
     /** Sensor only during a connected earpiece call—never on speaker/wired/Bluetooth/movie-only use. */
     private fun updateProximity() {
-        val use = CallState.current().phase in listOf(CallPhase.ACTIVE, CallPhase.RECONNECTING) &&
+        val use = CallState.current().phase == CallPhase.ACTIVE &&
             !speaker && selectedRoute == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
         if (use && proximity?.isHeld != true) {
             val pm = getSystemService(PowerManager::class.java)
@@ -467,10 +516,14 @@ class VoiceCallService : Service() {
     private fun endLocal(reason: String, notifyPeer: Boolean) {
         if (ending) return
         ending = true; cancelTimeout(); stopRingback(); releaseProximity()
-        if (notifyPeer && callId.isNotBlank()) CallSignaling.send(this, chatId, peerCode, callId, "hangup")
+        PartyRoomRoute.suppressAudioForVoiceCall(false)
+        if (notifyPeer && callId.isNotBlank()) {
+            val action = if (outgoing && startedAt == 0L) "cancel" else "hangup"
+            CallSignaling.send(this, chatId, peerCode, callId, action)
+        }
         val ended = System.currentTimeMillis()
         val duration = if (startedAt > 0L) ((ended - startedAt) / 1000L).toInt().coerceAtLeast(1) else 0
-        val outcome = if (duration > 0) "ended" else reason
+        val outcome = if (reason == "failed") "failed" else if (duration > 0) "ended" else reason
         if (callId.isNotBlank()) {
             CallStore.add(this, CallRecord(callId, peerName, peerCode, chatId, outgoing,
                 outcome, startedAt, ended, duration))
@@ -480,6 +533,10 @@ class VoiceCallService : Service() {
         CallNotify.clearAll(this); PendingCallStore.clear(this)
         signalReg?.remove(); signalReg = null
         rtc.execute { releaseRtc() }
+        if (routeCallbackRegistered) {
+            runCatching { audioManager.unregisterAudioDeviceCallback(routeCallback) }
+            routeCallbackRegistered = false
+        }
         if (Build.VERSION.SDK_INT >= 31) runCatching { audioManager.clearCommunicationDevice() }
         @Suppress("DEPRECATION")
         runCatching { audioManager.isSpeakerphoneOn = false }
@@ -494,6 +551,7 @@ class VoiceCallService : Service() {
             duration > 0 -> "📞 Voice call · ${duration / 60}:${(duration % 60).toString().padStart(2, '0')}"
             outcome == "declined" -> "📵 Voice call declined"
             outcome == "busy" -> "📞 Voice call · Busy"
+            outcome == "cancelled" -> "📵 Voice call cancelled"
             else -> "📵 Voice call · No answer"
         }
         FirebaseChat.send(this, chatId, ChatMsg(from = WpUser.me(this), text = text,
@@ -505,6 +563,7 @@ class VoiceCallService : Service() {
         "busy" -> "Dost doosri call par hai"
         "no_answer", "unavailable" -> "No answer"
         "failed" -> "Connection failed"
+        "cancelled" -> "Call cancelled"
         else -> "Call ended"
     }
 
@@ -520,7 +579,7 @@ class VoiceCallService : Service() {
     override fun onDestroy() {
         running = false
         if (!ending && callId.isNotBlank()) endLocal("ended", true)
-        signalReg?.remove(); releaseProximity(); stopRingback(); rtc.shutdownNow()
+        signalReg?.remove(); releaseProximity(); stopRingback(); rtc.shutdown()
         super.onDestroy()
     }
 

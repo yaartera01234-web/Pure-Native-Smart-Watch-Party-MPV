@@ -83,6 +83,7 @@ class InboxActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        CallMiniBar.attach(this)
         FirebaseChat.publishFriendProfile(this)
         // Chat screen se koi friend remove hua ho to list turant saaf ho jaye —
         // magar kuch na badla ho to bekaar dobara mat banao (tab badalte waqt jhatka na ho)

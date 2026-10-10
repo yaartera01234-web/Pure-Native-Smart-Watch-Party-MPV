@@ -57,6 +57,7 @@ class PartyLobbyActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        CallMiniBar.attach(this)
         if (::status.isInitialized && !getSharedPreferences("wp_native", Context.MODE_PRIVATE)
                 .getBoolean("party_live", false)) {
             status.text = "Yet Not Joined, Tap On Enter Party"

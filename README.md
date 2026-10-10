@@ -13,6 +13,9 @@ Ab shamil hai:
 - Room text/reply/reactions/photo/voice; media tower par AES-GCM encrypted retained blobs
 - Explicit Leave par us phone ki Room chat/media cache saaf; Room khaali hone ke baad bhi shared playback/media state retained rehti hai
 - `WP1-XXXX-XXXX` Friend Codes: own-code Copy/Share, lookup, requests, Accept/Reject aur stable code-backed DM chats
+- Accepted Friend Code contacts ke darmiyan pure-native private **1-to-1 voice calls**: WebRTC/Opus, STUN+TURN, encrypted idempotent signaling, incoming/ongoing call notifications, mute, earpiece/speaker/wired/Bluetooth routing, reconnect, timer aur minimize/restore
+- Earpiece par sirf connected state mein conditional proximity screen-off; ringing, connecting, reconnecting, speaker, wired aur Bluetooth par sensor hamesha off
+- Latest-100 durable Calls history, result/direction/duration, history callback aur DM call-summary rows; video aur group calling jaan-boojh kar shamil nahi
 - Native YouTube Search: Piped multi-instance primary, YouTube Data API fallback, recent/suggestions, thumbnails/duration
 - Search result tap par item queue ke end mein add aur poore Room ke liye synchronized play; recent chips re-entrant click ke baghair safe search chalate hain
 - Playlist chat se independent retained rehti hai, YouTube thumbnail/title aur custom rename/remove ke sath
@@ -22,7 +25,9 @@ Ab shamil hai:
 
 Room chat maximum 120 messages rakhti hai. Disconnect/glitch ko Leave nahi maana jata. Native MPV player Room playback ko MQTT/WP4 sync ke sath chalata hai.
 
-Friend Code directory aur Message Requests existing Firestore DM `chats/.../msgs` permission ke andar compatible envelopes use karte hain, is liye nayi collection permission ki zarurat nahi. Updated `firestore.rules` presence/token shape bhi cover karti hai. Firebase Storage istemal nahi hoti.
+Friend Code directory, Message Requests aur short-lived encrypted call signaling existing Firestore `chats/.../msgs` rule ke andar compatible envelopes use karte hain. Call packets reserved `_wp_call_*` chat documents mein rehte, visible DM history se alag hote aur consume/expiry par delete hote hain; is liye nayi collection/rule publication ki zarurat nahi. Updated `firestore.rules` presence/token shape bhi cover karti hai. Firebase Storage istemal nahi hoti.
+
+Incoming call discovery normal app launches se chalu foreground-backed listener par depend karti hai. Android force-stop ya aggressive OEM process killing ke baad, trusted push-call backend ke baghair incoming-call delivery ki guarantee nahi ho sakti; app dobara kholne par listener restore hota hai.
 
 ## MPV023 engine
 

@@ -146,7 +146,9 @@ object PendingCallStore {
     fun get(ctx: Context): PendingCall? {
         val p = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val value = PendingCall.from(p.getString(KEY, "").orEmpty()) ?: return null
-        if (System.currentTimeMillis() - value.at > 60_000L) { clear(ctx); return null }
+        // Keep enough time to turn an interrupted process' ringing invite into durable missed
+        // history on next launch. The controller still enforces the real 30-second ring window.
+        if (System.currentTimeMillis() - value.at > 24L * 60L * 60L * 1000L) { clear(ctx); return null }
         return value
     }
 

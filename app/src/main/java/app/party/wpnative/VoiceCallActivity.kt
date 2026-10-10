@@ -39,6 +39,15 @@ class VoiceCallActivity : Activity() {
                 Toast.makeText(ctx, "Voice call ke liye Friend Code zaroori hai", Toast.LENGTH_LONG).show()
                 return
             }
+            if (normalized == WpUser.friendCodeRaw(ctx)) {
+                Toast.makeText(ctx, "Apne aap ko call nahi kar sakte", Toast.LENGTH_LONG).show()
+                return
+            }
+            if (!Friends.hasCode(ctx, normalized)) {
+                Toast.makeText(ctx, "Sirf accepted Friend Code contact ko call kar sakte hain",
+                    Toast.LENGTH_LONG).show()
+                return
+            }
             if (CallState.active()) {
                 ctx.startActivity(openIntent(ctx)); return
             }
@@ -144,18 +153,25 @@ class VoiceCallActivity : Activity() {
     }
 
     private fun ensureMic(action: () -> Unit) {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            action(); return
-        }
+        val micGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val bluetoothGranted = Build.VERSION.SDK_INT < 31 ||
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        if (micGranted && bluetoothGranted) { action(); return }
         pendingAction = action
-        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
+        val missing = ArrayList<String>()
+        if (!micGranted) missing += Manifest.permission.RECORD_AUDIO
+        if (!bluetoothGranted && Build.VERSION.SDK_INT >= 31) missing += Manifest.permission.BLUETOOTH_CONNECT
+        requestPermissions(missing.toTypedArray(), REQ_MIC)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, results)
         if (requestCode != REQ_MIC) return
         val action = pendingAction; pendingAction = null
-        if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) action?.invoke()
+        val micAt = permissions.indexOf(Manifest.permission.RECORD_AUDIO)
+        val micGranted = if (micAt >= 0) results.getOrNull(micAt) == PackageManager.PERMISSION_GRANTED
+            else checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (micGranted) action?.invoke()
         else {
             status.text = "Microphone permission chahiye"
             Toast.makeText(this, "Mic allow kiye baghair voice call nahi chalegi", Toast.LENGTH_LONG).show()
@@ -220,6 +236,8 @@ class VoiceCallActivity : Activity() {
         return root
     }
 
+    private var lastControlSig = ""
+
     private fun render(value: CallSnapshot) {
         if (!::name.isInitialized) return
         name.text = value.peerName.ifBlank { "Dost" }
@@ -233,6 +251,9 @@ class VoiceCallActivity : Activity() {
         timer.text = "%02d:%02d".format(sec / 60L, sec % 60L)
         timer.visibility = if (value.startedAt > 0) View.VISIBLE else View.INVISIBLE
         rebuildAvatar(value)
+        val controlSig = "${value.phase}|${value.muted}|${value.speaker}"
+        if (lastControlSig == controlSig) return
+        lastControlSig = controlSig
         controls.removeAllViews()
         when (value.phase) {
             CallPhase.INCOMING -> {

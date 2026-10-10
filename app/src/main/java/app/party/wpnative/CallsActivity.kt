@@ -51,6 +51,7 @@ class CallsActivity : Activity() {
         super.onResume()
         reloadCalls()
         if (::listBox.isInitialized) fillList()
+        CallMiniBar.attach(this)
     }
 
     private fun reloadCalls() {
@@ -67,6 +68,7 @@ class CallsActivity : Activity() {
                 "busy" -> "Busy"
                 "no_answer", "unavailable" -> "No answer"
                 "failed" -> "Connection failed"
+                "cancelled" -> "Cancelled"
                 else -> (if (record.outgoing) "Outgoing" else "Incoming") + duration
             }
             calls += CallItem(record.peerName, direction,
