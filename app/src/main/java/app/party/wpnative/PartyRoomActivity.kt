@@ -2114,6 +2114,26 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
                 showPlayerActivity(command.by, "seek", "Synced", clockForFeed(it))
             }
         }
+        // Every peer which accepted the winning epoch refreshes the retained snapshot.
+        // This is state convergence only—never a rebroadcast user command/seek loop.
+        if (command.action in listOf("load", "play", "pause", "seek", "sync")) {
+            val retainedTime = when (command.action) {
+                "load" -> 0.0
+                else -> command.time ?: (player?.position() ?: 0.0)
+            }
+            val retainedPlaying = when (command.action) {
+                "load", "play" -> true
+                "pause" -> false
+                "sync" -> command.playing == true
+                else -> desiredPlaying
+            }
+            currentMedia?.let { media ->
+                val epoch = command.raw.optJSONObject("_wp4")?.optJSONArray("epoch")
+                    ?: playbackSync.currentEpoch()
+                publishPlaybackSnapshot(media, retainedTime, retainedPlaying, epoch,
+                    clockRunning = retainedPlaying)
+            }
+        }
         updatePlayerUi()
     }
 
