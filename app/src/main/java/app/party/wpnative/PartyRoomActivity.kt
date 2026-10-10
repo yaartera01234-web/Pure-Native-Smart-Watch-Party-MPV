@@ -189,6 +189,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     private var playlistOpen = false
     private var partyTowerUp = false
     private var partyMemberCount = 1
+    private val partyTypingNames = mutableListOf<String>()
     private lateinit var partyComposerRow: LinearLayout
     private lateinit var partyRecBar: LinearLayout
     private lateinit var partyRecTime: TextView
@@ -202,7 +203,13 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     private var currentMedia: PartyPlaybackMedia? = null
     private var currentMediaTitle = ""
     private var desiredPlaying = false
-    private var playerLoading: String? = null
+    private var playerLoading: String? = null // error only; progress is numeric below
+    private var playerBufferingActive = false
+    private var playerBufferResolved = false
+    private var playerLoadIssued = false
+    private var playerBufferPercent = 0
+    private var playerBufferStartedAt = 0L
+    private var playerBufferCompleteUntil = 0L
     private var playerQuality = 144
     private var playerQualities = listOf(144, 240, 360, 480, 720, 1080)
     private var resolveGeneration = 0L
@@ -215,6 +222,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     private var lastNotificationTitle = ""
     private var lastNotificationPlaying = false
     private val playerMain = Handler(Looper.getMainLooper())
+    private val stopPartyTyping = Runnable { PartyTower.sendTyping(false) }
     private val playerIo = Executors.newSingleThreadExecutor()
     private val serviceCommand: (String) -> Unit = { command -> runOnUiThread {
         when (command) {
@@ -325,6 +333,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             PartyTaskService.leaveRemovedTask(applicationContext)
         }
         if (playerFullscreen) exitPlayerFullscreen()
+        PartyTower.sendTyping(false)
         playerMain.removeCallbacksAndMessages(null)
         resolveGeneration++
         playerIo.shutdownNow()
@@ -774,7 +783,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             type = media.type,
             url = media.url,
             videoId = media.videoId,
-            label = if (media.videoId.isNotBlank()) "YouTube · ${media.videoId}" else raw.substringAfterLast('/').ifBlank { raw },
+            label = if (media.videoId.isNotBlank()) "YouTube · ${media.videoId}" else directMediaName(raw),
             by = WpUser.me(this)
         )
         partyQueue.add(item)
@@ -793,17 +802,22 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     }
 
     private fun youtubeId(raw: String): String {
-        YtAudioSource.videoIdOf(raw)?.let { return it }
+        val clean = raw.trim()
+        if (Regex("[A-Za-z0-9_-]{11}").matches(clean)) return clean
         return try {
-            val u = Uri.parse(raw)
-            when {
-                u.host?.contains("youtu.be", true) == true -> u.pathSegments.firstOrNull().orEmpty()
-                u.host?.contains("youtube.com", true) == true &&
-                    u.pathSegments.firstOrNull() in listOf("shorts", "embed", "live") ->
+            val u = Uri.parse(clean)
+            val host = u.host?.lowercase(Locale.US).orEmpty()
+            // A direct MKV/MP4 CDN URL can also have ?v=xxxxxxxxxxx. It is YouTube
+            // only when the HOST is actually youtube.com/youtu.be.
+            val youtubeHost = host == "youtube.com" || host.endsWith(".youtube.com")
+            val id = when {
+                host == "youtu.be" || host.endsWith(".youtu.be") -> u.pathSegments.firstOrNull().orEmpty()
+                youtubeHost && u.pathSegments.firstOrNull() in listOf("shorts", "embed", "live") ->
                     u.pathSegments.getOrNull(1).orEmpty()
-                u.host?.contains("youtube.com", true) == true -> u.getQueryParameter("v").orEmpty()
+                youtubeHost -> u.getQueryParameter("v").orEmpty()
                 else -> ""
-            }.takeIf { Regex("[A-Za-z0-9_-]{11}").matches(it) }.orEmpty()
+            }
+            id.takeIf { Regex("[A-Za-z0-9_-]{11}").matches(it) }.orEmpty()
         } catch (_: Throwable) { "" }
     }
 
@@ -815,9 +829,22 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         val type = when {
             path.endsWith(".m3u8", true) -> "hls"
             Regex("\\.(mp3|wav|ogg|m4a|aac|flac)$", RegexOption.IGNORE_CASE).containsMatchIn(path) -> "mp3"
+            // MKV/WEBM/MOV and unknown direct media all go to MPV's video path.
             else -> "mp4"
         }
         return PartyPlaybackMedia(type, clean, "")
+    }
+
+    private fun normalizePartyMedia(media: PartyPlaybackMedia): PartyPlaybackMedia =
+        if (media.type == "youtube" && media.url.isNotBlank() && youtubeId(media.url).isBlank()) {
+            parsePartyMedia(media.url)
+        } else media
+
+    private fun directMediaName(raw: String): String = try {
+        val pathName = Uri.parse(raw.trim()).lastPathSegment.orEmpty()
+        Uri.decode(pathName).ifBlank { "Direct media" }.take(80)
+    } catch (_: Throwable) {
+        raw.substringBefore('?').substringBefore('#').substringAfterLast('/').ifBlank { "Direct media" }.take(80)
     }
 
     private fun renderPartyPlaylist() {
@@ -1058,7 +1085,21 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             filters = arrayOf(InputFilter.LengthFilter(500))
             setPadding(dp(13f), 0, dp(13f), 0)
             background = themedInput(23f)
-            setOnFocusChangeListener { _, _ -> if (roomKeyboardOpen) setRoomKeyboardMode(true) }
+            setOnFocusChangeListener { _, focused ->
+                if (roomKeyboardOpen) setRoomKeyboardMode(true)
+                if (!focused) PartyTower.sendTyping(false)
+            }
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    playerMain.removeCallbacks(stopPartyTyping)
+                    if (s.isNullOrBlank()) PartyTower.sendTyping(false) else {
+                        PartyTower.sendTyping(true)
+                        playerMain.postDelayed(stopPartyTyping, 3_500L)
+                    }
+                }
+                override fun afterTextChanged(s: Editable?) {}
+            })
             setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_SEND) {
                     sendPartyMessage(); true
@@ -1240,8 +1281,12 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     private fun renderPartyThread() {
         if (!::partyAdapter.isInitialized) return
-        val rows = partyMsgs.map { m ->
+        val rows = partyMsgs.mapTo(mutableListOf()) { m ->
             Row(Row.MSG, "party:${m.id}", partySig(m), m, null)
+        }
+        // ChatAdapter ka wahi DM typing bubble: avatar + animated three dots.
+        if (partyTypingNames.isNotEmpty()) {
+            rows += Row(Row.TYPING, "party:typing", partyTypingNames.joinToString("|"), null, null)
         }
         partyAdapter.submit(rows)
     }
@@ -1581,17 +1626,19 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     }
 
     override fun onPartyMembers(members: List<PartyMember>) {
-        partyMemberCount = members.size.coerceAtLeast(1)
+        val visible = members.toMutableList()
+        val myId = PartyTower.currentMemberId()
+        // The only local fallback is the actual signed-in user — never a sample member.
+        if (visible.none { it.id == myId }) visible += PartyMember(
+            myId, WpUser.me(this), palette.accent[1], System.currentTimeMillis())
+        partyMemberCount = visible.size
         if (::partyOnlineText.isInitialized) partyOnlineText.text =
             if (partyTowerUp) "●  $partyMemberCount online" else "📻 Reconnect…"
-        renderPartyMembers(members)
+        renderPartyMembers(visible)
     }
 
-    private fun renderPartyMembers(incoming: List<PartyMember>) {
+    private fun renderPartyMembers(list: List<PartyMember>) {
         if (!::partyMembersList.isInitialized) return
-        val list = if (incoming.isEmpty()) listOf(PartyMember(
-            PartyTower.currentMemberId(), WpUser.me(this), palette.accent[1], System.currentTimeMillis()))
-        else incoming
         partyMembersTitle.text = "👥 Party Members (${list.size})"
         partyMembersList.removeAllViews()
         list.forEach { member ->
@@ -1662,11 +1709,28 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     }
 
     override fun onPartyQueue(items: List<PartyQueueItem>, index: Int) {
-        partyQueue.clear(); partyQueue.addAll(items.map { it.copy() })
+        var corrected = false
+        val normalized = items.map { item ->
+            if (item.type == "youtube" && item.url.isNotBlank() && youtubeId(item.url).isBlank()) {
+                corrected = true
+                val media = parsePartyMedia(item.url)
+                item.copy(type = media.type, videoId = "",
+                    label = if (item.label.startsWith("YouTube", true)) directMediaName(item.url) else item.label,
+                    title = if (item.title.startsWith("YouTube", true)) "" else item.title)
+            } else item.copy()
+        }
+        partyQueue.clear(); partyQueue.addAll(normalized)
         partyQueueIndex = index
+        if (corrected && PartyTower.isConnected()) PartyTower.publishQueue(partyQueue, index)
         currentMedia?.let { currentMediaTitle = titleForMedia(it) }
         renderPartyPlaylist()
         updatePlayerUi()
+    }
+
+    override fun onPartyTyping(names: List<String>) {
+        partyTypingNames.clear(); partyTypingNames.addAll(names)
+        renderPartyThread()
+        if (names.isNotEmpty()) scrollPartyBottom()
     }
 
     override fun onPartyPlaybackState(state: PartyPlaybackState) {
@@ -1754,7 +1818,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         }
         val media = parsePartyMedia(raw)
         val label = if (media.type == "youtube") "YouTube · ${media.videoId}"
-        else media.url.substringBefore('?').substringAfterLast('/').ifBlank { "Video" }
+        else directMediaName(media.url)
         val item = PartyQueueItem("q" + System.currentTimeMillis().toString(36), media.type,
             media.url, media.videoId, label, by = WpUser.me(this))
         partyQueue.add(item)
@@ -1787,28 +1851,43 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     }
 
     private fun playMediaEverywhere(media: PartyPlaybackMedia, title: String) {
+        val normalized = normalizePartyMedia(media)
+        val normalizedTitle = if (normalized != media && title.startsWith("YouTube", true)) {
+            directMediaName(normalized.url)
+        } else title
         val wp4 = playbackSync.localCommand()
-        loadPartyMedia(media, 0.0, true, title)
-        PartyTower.publishPlaybackState(media, 0.0, true)
-        PartyTower.publishPlaybackCommand("load", media = media, user = true, wp4 = wp4)
-        showPlayerActivity(WpUser.me(this), "play", "Resumed", title)
+        loadPartyMedia(normalized, 0.0, true, normalizedTitle)
+        PartyTower.publishPlaybackState(normalized, 0.0, true)
+        PartyTower.publishPlaybackCommand("load", media = normalized, user = true, wp4 = wp4)
+        showPlayerActivity(WpUser.me(this), "play", "Resumed", normalizedTitle)
     }
 
     private fun loadPartyMedia(
-        media: PartyPlaybackMedia,
+        incoming: PartyPlaybackMedia,
         position: Double,
         playWhenReady: Boolean,
-        titleHint: String = titleForMedia(media),
+        titleHint: String = titleForMedia(incoming),
         qualityOverride: Int? = null
     ) {
+        val media = normalizePartyMedia(incoming)
         if (media.type == "none" || (media.type != "youtube" && media.url.isBlank())) return
         currentMedia = media
-        currentMediaTitle = titleHint.ifBlank { titleForMedia(media) }
+        currentMediaTitle = if (media != incoming && titleHint.startsWith("YouTube", true)) {
+            directMediaName(media.url)
+        } else titleHint.ifBlank { titleForMedia(media) }
         desiredPlaying = playWhenReady
         endedHandled = false
         val generation = ++resolveGeneration
         val player = mpvVideo ?: return
-        playerLoading = if (media.type == "youtube") "⏳ YouTube stream tayyar ho rahi hai…" else "⏳ Media load ho rahi hai…"
+        player.stop()
+        player.clearError()
+        playerLoading = null
+        playerBufferingActive = true
+        playerBufferResolved = media.type != "youtube"
+        playerLoadIssued = false
+        playerBufferPercent = 1
+        playerBufferStartedAt = SystemClock.elapsedRealtime()
+        playerBufferCompleteUntil = 0L
         player.show()
         partyPlayer.setMini(false)
         updatePlayerUi()
@@ -1821,11 +1900,16 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
                     runOnUiThread {
                         if (generation != resolveGeneration || currentMedia?.key() != media.key()) return@runOnUiThread
                         if (result == null) {
-                            playerLoading = null
+                            playerBufferingActive = false
+                            playerBufferPercent = 0
+                            playerLoading = "Stream unavailable"
                             Toast.makeText(this, "YouTube stream nahi mili — link ya net check karo", Toast.LENGTH_LONG).show()
                             updatePlayerUi()
                             return@runOnUiThread
                         }
+                        playerBufferResolved = true
+                        playerBufferPercent = maxOf(playerBufferPercent, 45)
+                        playerBufferStartedAt = SystemClock.elapsedRealtime()
                         playerQuality = result.height.takeIf { it > 0 } ?: quality
                         if (result.qualities.isNotEmpty()) playerQualities = result.qualities
                         if (!result.title.isNullOrBlank() && (currentMediaTitle.startsWith("YouTube ·") || currentMediaTitle.isBlank())) {
@@ -1833,10 +1917,10 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
                         }
                         player.ensure {
                             if (generation != resolveGeneration) return@ensure
+                            playerLoadIssued = true
                             player.play(result.url, position, startMuted = false, audioUrl = result.audioUrl,
                                 userAgent = result.userAgent, referer = result.referer)
                             if (!desiredPlaying) player.pause()
-                            playerLoading = "⏳ MPV buffer ho raha hai…"
                         }
                     }
                 }
@@ -1844,9 +1928,9 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         } else {
             player.ensure {
                 if (generation != resolveGeneration) return@ensure
+                playerLoadIssued = true
                 player.play(media.url, position, startMuted = false)
                 if (!desiredPlaying) player.pause()
-                playerLoading = "⏳ MPV buffer ho raha hai…"
             }
         }
         playbackSync.reset(anchor = true)
@@ -1971,20 +2055,42 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
                 false, null, 0, 0, playerQuality)
             return
         }
-        if (player.loaded()) playerLoading = null
+        val now = SystemClock.elapsedRealtime()
+        val loaded = player.loaded()
+        val error = player.error
+        if (!error.isNullOrBlank() && !loaded && playerLoadIssued) {
+            playerBufferingActive = false
+            playerBufferPercent = 0
+            playerLoading = "MPV error: ${error.take(60)}"
+        } else if (loaded && playerBufferingActive && playerLoadIssued) {
+            playerBufferPercent = 100
+            playerBufferingActive = false
+            playerBufferCompleteUntil = now + 900L
+            playerLoading = null
+        } else if (playerBufferingActive) {
+            val elapsed = now - playerBufferStartedAt
+            val actual = player.cachePct()
+            val floor = if (media.type == "youtube" && playerBufferResolved) 45 else 1
+            val target = when {
+                !playerBufferResolved -> (1 + elapsed / 900L).toInt().coerceIn(1, 45)
+                actual > 0 -> floor + ((100 - floor) * actual / 100)
+                else -> (floor + elapsed / 180L).toInt().coerceAtMost(95)
+            }
+            playerBufferPercent = maxOf(playerBufferPercent, target.coerceIn(1, 99))
+        }
         val position = player.position()
         val duration = player.duration()
         val isPlaying = desiredPlaying && !player.isPaused() && !player.ended()
         val isAudio = media.type == "mp3" ||
-            (player.loaded() && player.actualHeight() == 0 && player.audioCodec().isNotBlank())
-        val buffer = player.buffering()
-        val error = player.error
-        val loadText = when {
-            !error.isNullOrBlank() && !player.loaded() -> "⚠ MPV: ${error.take(70)}"
-            else -> playerLoading
+            (loaded && player.actualHeight() == 0 && player.audioCodec().isNotBlank())
+        val bufferingPercent = when {
+            playerBufferingActive -> playerBufferPercent.coerceIn(1, 99)
+            now < playerBufferCompleteUntil -> 100
+            player.buffering() -> player.cachePct().coerceIn(1, 100)
+            else -> 0
         }
         partyPlayer.render(true, currentMediaTitle, media.type, isPlaying, player.isMuted(),
-            position, duration, isAudio, loadText, if (buffer) player.cachePct() else 0,
+            position, duration, isAudio, playerLoading, bufferingPercent,
             player.audioTracks().size, playerQuality)
         fullscreenControls?.tick()
 

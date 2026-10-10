@@ -381,7 +381,9 @@ internal class PartyPlayerView(context: Context) : FrameLayout(context) {
         bottom.visibility = if (chrome) VISIBLE else GONE
         shade.visibility = if (chrome && !audioMode) VISIBLE else GONE
         audioArt.visibility = if (hasMedia && audioMode) VISIBLE else GONE
-        surfaceHost.visibility = if (hasMedia && !audioMode) VISIBLE else INVISIBLE
+        // Audio artwork simply covers MPV. Keep its host VISIBLE so MP3/M4A can
+        // initialise and continue decoding even when no video frame exists.
+        surfaceHost.visibility = if (hasMedia) VISIBLE else INVISIBLE
     }
 
     override fun onAttachedToWindow() {

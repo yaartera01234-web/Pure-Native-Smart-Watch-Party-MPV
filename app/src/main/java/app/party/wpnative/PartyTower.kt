@@ -126,6 +126,7 @@ interface PartyTowerListener {
     fun onPartyMedia(mid: String, bytes: ByteArray)
     fun onPartyReactions(mid: String, values: Map<String, Pair<Int, Boolean>>)
     fun onPartyQueue(items: List<PartyQueueItem>, index: Int)
+    fun onPartyTyping(names: List<String>)
     fun onPartyPlaybackState(state: PartyPlaybackState)
     fun onPartyPlaybackCommand(command: PartyPlaybackCommand)
 }
@@ -177,6 +178,8 @@ object PartyTower {
     private var visibleAfter = 0L
 
     private val members = java.util.concurrent.ConcurrentHashMap<String, PartyMember>()
+    private val typingUsers = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+    private var lastTypingSentAt = 0L
     private val messages = java.util.concurrent.ConcurrentHashMap<String, PartyMessage>()
     private val messageJson = java.util.concurrent.ConcurrentHashMap<String, JSONObject>()
     private val encryptedBlobs = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
@@ -191,6 +194,15 @@ object PartyTower {
         override fun run() {
             if (connected && !explicitLeaving) publishPresence()
             main.postDelayed(this, 15_000L)
+        }
+    }
+    private val typingSweep = object : Runnable {
+        override fun run() {
+            val now = System.currentTimeMillis()
+            val expired = typingUsers.entries.filter { it.value.second < now }.map { it.key }
+            expired.forEach { typingUsers.remove(it) }
+            if (expired.isNotEmpty()) emitTyping()
+            if (typingUsers.isNotEmpty()) main.postDelayed(this, 1_000L)
         }
     }
 
@@ -388,6 +400,21 @@ object PartyTower {
         publish("$base/react", ev.toString().toByteArray(), false)
     }
 
+    /** Real Room typing pulse; no demo/fake typer is ever generated. */
+    fun sendTyping(active: Boolean) {
+        if (!connected || memberId.isBlank()) return
+        val now = System.currentTimeMillis()
+        if (active && now - lastTypingSentAt < 1_200L) return
+        if (active) {
+            lastTypingSentAt = now
+            val body = JSONObject().apply { put("name", myName); put("ts", now) }
+            publish("$base/typing/$memberId", body.toString().toByteArray(StandardCharsets.UTF_8), false)
+        } else {
+            lastTypingSentAt = 0L
+            publish("$base/typing/$memberId", ByteArray(0), false)
+        }
+    }
+
     fun deleteMessage(mid: String) {
         if (!connected || mid.isBlank()) return
         val m = messages[mid]
@@ -461,6 +488,7 @@ object PartyTower {
     /** Explicit confirmed Leave only. Disconnect/glitch kabhi yahan nahi aata. */
     fun leave(done: (() -> Unit)? = null) {
         if (explicitLeaving) return
+        sendTyping(false)
         explicitLeaving = true
         main.removeCallbacks(presenceBeat)
         val now = System.currentTimeMillis()
@@ -512,6 +540,7 @@ object PartyTower {
     private fun handle(topic: String, payload: ByteArray) {
         when {
             topic.startsWith("$base/members/") -> handleMember(topic.substringAfterLast('/'), payload)
+            topic.startsWith("$base/typing/") -> handleTyping(topic.substringAfterLast('/'), payload)
             topic.startsWith("$base/chat/blob/") -> handleBlob(topic.substringAfterLast('/'), payload)
             topic.startsWith("$base/chat/msg/") -> handleRetainedMessage(topic.substringAfterLast('/'), payload)
             topic == "$base/chat" -> if (payload.isNotEmpty()) handleMessageEnvelope(payload)
@@ -524,12 +553,27 @@ object PartyTower {
     }
 
     private fun handleMember(id: String, payload: ByteArray) {
-        if (payload.isEmpty()) members.remove(id) else {
+        if (payload.isEmpty()) {
+            members.remove(id)
+            if (typingUsers.remove(id) != null) emitTyping()
+        } else {
             val o = JSONObject(String(payload, StandardCharsets.UTF_8))
             members[id] = PartyMember(id, o.optString("name", "Friend"),
                 parseColor(o.optString("color")), o.optLong("ts", System.currentTimeMillis()))
         }
         emitMembers()
+    }
+
+    private fun handleTyping(id: String, payload: ByteArray) {
+        if (id == memberId) return
+        if (payload.isEmpty()) typingUsers.remove(id) else {
+            val o = JSONObject(String(payload, StandardCharsets.UTF_8))
+            val name = o.optString("name", members[id]?.name ?: "Friend").take(20)
+            typingUsers[id] = name to (System.currentTimeMillis() + 4_000L)
+        }
+        emitTyping()
+        main.removeCallbacks(typingSweep)
+        if (typingUsers.isNotEmpty()) main.postDelayed(typingSweep, 1_000L)
     }
 
     private fun handleRetainedMessage(mid: String, payload: ByteArray) {
@@ -618,7 +662,9 @@ object PartyTower {
         val o = JSONObject(String(payload, StandardCharsets.UTF_8))
         when (o.optString("t")) {
             "leave" -> {
-                members.remove(o.optString("from"))
+                val id = o.optString("from")
+                members.remove(id)
+                if (typingUsers.remove(id) != null) emitTyping()
                 emitMembers()
             }
             "purge" -> {
@@ -693,7 +739,7 @@ object PartyTower {
 
     private fun emitSnapshot() {
         postStatus(connected, if (connected) "🗼 ${towerLabel(towerIndex)} connected" else "📻 Tower reconnect ho raha hai…")
-        emitMembers(); emitQueue()
+        emitMembers(); emitQueue(); emitTyping()
         playbackState?.let { state -> main.post { listener?.onPartyPlaybackState(state) } }
         val list = messages.values.filter { it.ts > visibleAfter }.sortedBy { it.ts }
         list.forEach { m -> main.post { listener?.onPartyMessage(m) } }
@@ -711,6 +757,12 @@ object PartyTower {
         main.post { listener?.onPartyQueue(copy, index) }
     }
 
+    private fun emitTyping() {
+        val now = System.currentTimeMillis()
+        val names = typingUsers.values.filter { it.second >= now }.map { it.first }.distinct().sorted()
+        main.post { listener?.onPartyTyping(names) }
+    }
+
     private fun postStatus(up: Boolean, text: String) {
         main.post { listener?.onPartyTowerStatus(up, text) }
     }
@@ -723,6 +775,11 @@ object PartyTower {
         connected = false
         joining = false
         main.removeCallbacks(presenceBeat)
+        main.removeCallbacks(typingSweep)
+        if (typingUsers.isNotEmpty()) {
+            typingUsers.clear()
+            emitTyping()
+        }
         val c = client
         client = null
         try { c?.disconnectForcibly(500L, 500L, false) } catch (_: Throwable) { }
@@ -730,7 +787,8 @@ object PartyTower {
     }
 
     private fun resetTransient() {
-        members.clear(); messages.clear(); messageJson.clear(); encryptedBlobs.clear()
+        members.clear(); typingUsers.clear(); lastTypingSentAt = 0L
+        messages.clear(); messageJson.clear(); encryptedBlobs.clear()
         deliveredMedia.clear(); reactions.clear(); queue.clear(); queueIndex = -1
         playbackState = null
         synchronized(seenPlaybackCommands) { seenPlaybackCommands.clear() }

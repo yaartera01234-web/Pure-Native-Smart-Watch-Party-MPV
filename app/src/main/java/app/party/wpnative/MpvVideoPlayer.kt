@@ -309,7 +309,12 @@ class MpvVideoPlayer(private val act: Activity, root: FrameLayout) {
     }
     fun title(): String = try { view?.mpv?.get(MpvProperties.Metadata)?.getOrNull()?.get("title").orEmpty() } catch (_: Throwable) { "" }
 
-    fun stop() { main.post { try { view?.mpv?.command("stop"); dispPos = -1.0 } catch (t: Throwable) {} } }
+    fun clearError() { localError = null }
+
+    fun stop() {
+        val action = Runnable { try { view?.mpv?.command("stop"); dispPos = -1.0 } catch (_: Throwable) {} }
+        if (Looper.myLooper() == Looper.getMainLooper()) action.run() else main.post(action)
+    }
 
     fun destroy() {
         main.post {
