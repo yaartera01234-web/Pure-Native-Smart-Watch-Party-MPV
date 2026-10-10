@@ -106,14 +106,21 @@ class VoiceCallService : Service() {
     private var source: AudioSource? = null
     private var localTrack: AudioTrack? = null
     private var remoteTrack: AudioTrack? = null
+    private class SpeechGate(var noiseFloor: Double) {
+        var candidateSince = 0L
+        var lastAboveAt = 0L
+    }
+    private val speechGateLock = Any()
+    private val localSpeechGate = SpeechGate(0.006)
+    private val remoteSpeechGate = SpeechGate(0.004)
     @Volatile private var lastVadDispatchAt = 0L
     private var movieDucked = false
     private var unduckTask: Runnable? = null
     private val remoteSpeechSink = object : AudioTrackSink {
         override fun onData(audioData: ByteBuffer, bitsPerSample: Int, sampleRate: Int,
             numberOfChannels: Int, numberOfFrames: Int, absoluteCaptureTimestampMs: Long) {
-            if (bitsPerSample == 16 && pcmLevel(audioData, numberOfChannels * numberOfFrames) >= 0.014) {
-                speechDetected(local = false)
+            if (bitsPerSample == 16) {
+                observeSpeechLevel(pcmLevel(audioData, numberOfChannels * numberOfFrames), local = false)
             }
         }
     }
@@ -128,7 +135,7 @@ class VoiceCallService : Service() {
     private var lastIceRestartAt = 0L
     @Volatile private var ending = false
     @Volatile private var muted = false
-    private var speaker = false
+    @Volatile private var speaker = false
 
     override fun onCreate() {
         super.onCreate()
@@ -244,7 +251,7 @@ class VoiceCallService : Service() {
             .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
             .setAudioAttributes(attributes)
             .setSamplesReadyCallback { samples ->
-                if (pcmLevel(samples.data) >= 0.028) speechDetected(local = true)
+                observeSpeechLevel(pcmLevel(samples.data), local = true)
             }
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
@@ -484,9 +491,45 @@ class VoiceCallService : Service() {
     }
 
     /**
-     * Both local microphone PCM and decoded remote PCM feed this VAD. Attack is immediate;
-     * a 720ms release hold prevents movie volume pumping between words and sentences.
+     * A small adaptive speech gate sits in front of movie ducking. A single PCM spike, keyboard
+     * tap or other brief room noise must not lower the movie: energy has to remain above the
+     * side-specific adaptive threshold for 260ms. The higher local threshold in speaker mode
+     * also helps reject movie sound leaking back into the microphone.
      */
+    private fun observeSpeechLevel(level: Double, local: Boolean) {
+        if (ending || (local && muted) || CallState.current().phase != CallPhase.ACTIVE) return
+        val now = SystemClock.elapsedRealtime()
+        var confirmed = false
+        synchronized(speechGateLock) {
+            val gate = if (local) localSpeechGate else remoteSpeechGate
+            val baseThreshold = when {
+                !local -> 0.018
+                speaker -> 0.045
+                else -> 0.034
+            }
+            val adaptiveThreshold = (gate.noiseFloor * 2.2)
+                .coerceAtMost(if (local) 0.075 else 0.055)
+            val threshold = maxOf(baseThreshold, adaptiveThreshold)
+            if (level >= threshold) {
+                if (gate.candidateSince == 0L || now - gate.lastAboveAt > 130L) {
+                    gate.candidateSince = now
+                }
+                gate.lastAboveAt = now
+                confirmed = now - gate.candidateSince >= 260L
+            } else {
+                // Learn steady room noise only while it is below the speech threshold. Freezing
+                // the floor during a candidate prevents soft speech from teaching itself away.
+                val alpha = if (gate.candidateSince == 0L) 0.035 else 0.010
+                val learned = level.coerceIn(0.001, baseThreshold)
+                gate.noiseFloor = (gate.noiseFloor * (1.0 - alpha) + learned * alpha)
+                    .coerceIn(0.002, if (local) 0.032 else 0.024)
+                if (now - gate.lastAboveAt > 130L) gate.candidateSince = 0L
+            }
+        }
+        if (confirmed) speechDetected(local)
+    }
+
+    /** Confirmed local or remote speech refreshes a 900ms release hold between spoken words. */
     private fun speechDetected(local: Boolean) {
         if (ending || (local && muted) || CallState.current().phase != CallPhase.ACTIVE) return
         val now = SystemClock.elapsedRealtime()
@@ -503,12 +546,21 @@ class VoiceCallService : Service() {
                 movieDucked = false
                 PartyRoomRoute.setCallSpeechDucking(false)
                 unduckTask = null
-            }.also { main.postDelayed(it, 720L) }
+            }.also { main.postDelayed(it, 900L) }
         }
     }
 
     private fun clearSpeechDucking() {
         unduckTask?.let(main::removeCallbacks); unduckTask = null
+        synchronized(speechGateLock) {
+            localSpeechGate.noiseFloor = 0.006
+            localSpeechGate.candidateSince = 0L
+            localSpeechGate.lastAboveAt = 0L
+            remoteSpeechGate.noiseFloor = 0.004
+            remoteSpeechGate.candidateSince = 0L
+            remoteSpeechGate.lastAboveAt = 0L
+        }
+        lastVadDispatchAt = 0L
         movieDucked = false
         PartyRoomRoute.setCallSpeechDucking(false)
     }

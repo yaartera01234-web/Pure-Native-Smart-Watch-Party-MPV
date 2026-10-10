@@ -79,7 +79,7 @@ object PartyRoomRoute {
     }
 
     /**
-     * WebRTC VAD drives local movie ducking only while either caller is speaking.
+     * The call's adaptive speech gate drives local movie ducking only after sustained speech.
      * Playback/sync are untouched and no Party command is published.
      */
     fun setCallSpeechDucking(duck: Boolean) {
@@ -2229,13 +2229,13 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     /**
      * Conversation-aware ducking: movie stays audible at full level in call silence, fades to
-     * 28% while either caller speaks, then smoothly returns. It never pauses/seeks or publishes.
+     * 45% after confirmed speech, then smoothly returns. It never pauses/seeks or publishes.
      */
     internal fun setVoiceCallSpeechDucking(duck: Boolean) {
         val player = mpvVideo ?: return
         if (voiceCallSpeechDucked == duck) return
         voiceCallSpeechDucked = duck
-        if (duck) player.fadeVolume(28, 150L) else player.fadeVolume(100, 380L)
+        if (duck) player.fadeVolume(45, 180L) else player.fadeVolume(100, 500L)
     }
 
     private fun userPlayPlayback() {
