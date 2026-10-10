@@ -672,7 +672,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
                 intArrayOf(hex("#EF2B2D"), hex("#C5162E"))).apply {
                 cornerRadius = dp(12f).toFloat()
             }
-            setOnClickListener { playerLater() }
+            setOnClickListener { openYouTubeSearch() }
         }
         f.addView(TextView(this).apply {
             text = "▶"
@@ -2354,8 +2354,33 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         else "%02d:%02d".format(seconds / 60, seconds % 60)
     }
 
-    private fun playerLater() {
-        Toast.makeText(this, "YouTube search player ke baad wale end batch mein", Toast.LENGTH_SHORT).show()
+    private fun openYouTubeSearch() {
+        YouTubeSearchDialog(this, palette, ::playYouTubeSearchResult).show()
+    }
+
+    /** Original behavior: tapped result queue ke end mein add aur sab peers par play. */
+    private fun playYouTubeSearchResult(result: YouTubeSearch.Item): Boolean {
+        if (!PartyTower.isConnected()) {
+            Toast.makeText(this, "Tower connect hone do", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        val url = "https://www.youtube.com/watch?v=${result.videoId}"
+        val media = PartyPlaybackMedia("youtube", url, result.videoId)
+        val item = PartyQueueItem(
+            id = "q" + System.currentTimeMillis().toString(36),
+            type = "youtube",
+            url = url,
+            videoId = result.videoId,
+            label = result.title.take(120),
+            title = result.title.take(120),
+            by = WpUser.me(this)
+        )
+        partyQueue.add(item)
+        partyQueueIndex = partyQueue.lastIndex
+        PartyTower.publishQueue(partyQueue, partyQueueIndex)
+        renderPartyPlaylist()
+        playMediaEverywhere(media, item.originalName())
+        return true
     }
 
     private fun styleRoomDialog(dialog: AlertDialog) {
