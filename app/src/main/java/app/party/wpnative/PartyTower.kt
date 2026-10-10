@@ -375,6 +375,30 @@ object PartyTower {
         val mid = randomId()
         val ts = System.currentTimeMillis()
         val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date(ts))
+
+        // Optimistic local echo: sender ko broker round-trip ka intezar na karna pare.
+        // MQTT se apna echo aayega to messages map ki same mid us duplicate ko rok degi.
+        val local = PartyMessage(
+            mid = mid,
+            senderId = memberId,
+            name = myName,
+            color = myColor,
+            text = text.take(500),
+            replyName = replyName.take(20),
+            replyText = replyText.take(120),
+            replyMid = replyMid,
+            time = time,
+            ts = ts,
+            type = type,
+            mediaRef = if (media != null && media.isNotEmpty()) "mqtt:$mid" else "",
+            mediaIv = "",
+            dur = dur,
+            wave = wave
+        )
+        messages[mid] = local
+        trimRetainedIfNeeded()
+        main.post { listener?.onPartyMessage(local) }
+
         io.execute {
             try {
                 var mediaRef = ""

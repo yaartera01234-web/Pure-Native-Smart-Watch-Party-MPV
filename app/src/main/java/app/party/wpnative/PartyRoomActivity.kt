@@ -2288,7 +2288,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         roomBackdrop.addView(partyPlayer, FrameLayout.LayoutParams(-1, -1))
         partyPlayer.setFullscreenHost(true)
         player.setFullscreen(true)
-        val controls = MpvFullscreenControls(this, player, palette,
+        val controls = MpvFullscreenControls(this, player,
             send = { command ->
                 when {
                     command == "toggle" || command == "playpause" -> userTogglePlayback()
