@@ -222,12 +222,8 @@ class InboxActivity : Activity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(12), dp(14), dp(12))
-            background = roundBox(
-                if (f.unread) Color.argb(20, 139, 114, 255) else Color.argb(10, 255, 255, 255),
-                if (f.unread) Color.argb(46, 139, 114, 255) else Color.argb(15, 255, 255, 255),
-                16, 1
-            )
+            setPadding(dp(12), dp(11), dp(12), dp(11))
+            background = inboxRowBackground(f.unread)
             setOnClickListener {
                 val chatId = WpUser.friendChatId(this@InboxActivity, f.name, f.code)
                 DmInboxStore.markRead(this@InboxActivity, chatId, f.lastTs)
@@ -241,44 +237,61 @@ class InboxActivity : Activity() {
 
         row.setOnLongClickListener { showRowMenu(row, f); true }
 
-        // Actual Friend Code profile DP + online dot.
-        val avatar = FrameLayout(this)
-        avatar.addView(DpStore.circle(this, f.name, f.color, 48),
-            FrameLayout.LayoutParams(dp(48), dp(48)))
-        // Online/Offline ki nishani: website .dm-row .av3 i (13dp gola, 2dp border)
-        avatar.clipChildren = false
-        row.clipChildren = false
+        // Original ring4: 49dp cyan-violet-pink ring, 45dp dark-edged real Friend Code DP.
+        val online = Presence.isOnline(this, f.name)
+        val avatar = FrameLayout(this).apply {
+            clipChildren = false
+            setPadding(dp(2), dp(2), dp(2), dp(2))
+            background = if (online) {
+                GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    intArrayOf(hex("#54e8ff"), hex("#8b72ff"), hex("#ff5ebc"))).apply {
+                    shape = GradientDrawable.OVAL
+                }
+            } else GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(36, 255, 255, 255))
+            }
+        }
+        val avatarEdge = FrameLayout(this).apply {
+            setPadding(dp(2), dp(2), dp(2), dp(2))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(hex("#100a1e"))
+            }
+            addView(DpStore.circle(this@InboxActivity, f.name, f.color, 41),
+                FrameLayout.LayoutParams(dp(41), dp(41), Gravity.CENTER))
+        }
+        avatar.addView(avatarEdge, FrameLayout.LayoutParams(dp(45), dp(45), Gravity.CENTER))
         avatar.addView(
-            presenceDot(this, Presence.isOnline(this, f.name), 13, 17, 2),
+            presenceDot(this, online, 13, 17, 2),
             FrameLayout.LayoutParams(dp(17), dp(17), Gravity.END or Gravity.BOTTOM).apply {
                 setMargins(0, 0, -dp(2), -dp(2))
             }
         )
-        row.addView(avatar, lp(dp(48), dp(48)))
+        row.clipChildren = false
+        row.addView(avatar, lp(dp(49), dp(49)))
 
         // Naam + last message pill
         val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         info.addView(TextView(this).apply {
             text = if (f.pinned) "📌 ${f.name}" else f.name
-            textSize = 14f
+            textSize = 13.5f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(Color.WHITE)
             setSingleLine(true)
         })
         if (f.last.isNotBlank()) info.addView(TextView(this).apply {
+            val palette = selectedBubblePalette()
             text = (if (f.outgoing) "✓  " else "") + f.last
             textSize = 12f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            setPadding(dp(11), dp(4), dp(11), dp(4))
-            background = if (f.unread) {
-                GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(hex("#7c3aed"), hex("#a78bfa")))
-                    .apply { cornerRadius = dp(12).toFloat() }
-            } else {
-                roundBox(Color.argb(60, 12, 10, 28), Color.argb(70, 255, 255, 255), 12, 1)
-            }
+            setTextColor(if (f.outgoing) palette.ownText else palette.otherText)
+            setPadding(dp(11), dp(6), dp(11), dp(6))
+            background = miniMessageBackground(f.outgoing, palette)
+            setSingleLine(true)
+            maxWidth = resources.displayMetrics.widthPixels - dp(160)
         }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5) })
-        row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12) })
+        row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(11) })
 
         // Original meta3: time/day + unread number; read ho to lock.
         val meta = LinearLayout(this).apply {
@@ -492,11 +505,11 @@ class InboxActivity : Activity() {
 
         copy.setOnClickListener {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("Watch Party Friend Code", ownCode))
+            cm.setPrimaryClip(ClipData.newPlainText("Smart Party Plus Friend Code", ownCode))
             Toast.makeText(this, "📋 Code copy ho gaya", Toast.LENGTH_SHORT).show()
         }
         share.setOnClickListener {
-            val text = "Watch Party pe mujhe add karo 👇\nMera code: $ownCode"
+            val text = "Smart Party Plus pe mujhe add karo 👇\nMera code: $ownCode"
             try {
                 startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
@@ -569,7 +582,7 @@ class InboxActivity : Activity() {
                 openFriendChat(profile)
                 return@setOnClickListener
             }
-            val greeting = "👋 Salam! Main ${WpUser.me(this)} hoon — Watch Party pe milte hain."
+            val greeting = "👋 Salam! Main ${WpUser.me(this)} hoon — Smart Party Plus pe milte hain."
             request.isEnabled = false
             request.alpha = 0.55f
             request.text = "Request bhej rahe hain…"
@@ -979,6 +992,46 @@ class InboxActivity : Activity() {
             setGravity(Gravity.BOTTOM)
         }
         dlg.show()
+    }
+
+    /** Original v2.2 inbox glass card, including the unread cyan-to-pink edge. */
+    private fun inboxRowBackground(unread: Boolean): LayerDrawable {
+        val base = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            if (unread) intArrayOf(Color.argb(43, 84, 232, 255), Color.argb(33, 255, 94, 188))
+            else intArrayOf(Color.argb(33, 139, 114, 255), Color.argb(18, 255, 94, 188))).apply {
+            cornerRadius = dp(17).toFloat()
+            setStroke(dp(1), Color.argb(if (unread) 51 else 33, 255, 255, 255))
+        }
+        val edge = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(hex("#54e8ff"), hex("#ff5ebc"))).apply {
+            cornerRadii = floatArrayOf(0f, 0f, dp(3).toFloat(), dp(3).toFloat(),
+                dp(3).toFloat(), dp(3).toFloat(), 0f, 0f)
+            alpha = if (unread) 255 else 0
+        }
+        return LayerDrawable(arrayOf(base, edge)).apply {
+            setLayerWidth(1, dp(3))
+            setLayerGravity(1, Gravity.START)
+            setLayerInset(1, 0, dp(15), 0, dp(15))
+        }
+    }
+
+    private fun selectedBubblePalette(): WpBubbleTheme {
+        val index = getSharedPreferences("wp_native", Context.MODE_PRIVATE)
+            .getInt("bubble", 1).coerceIn(WpBubbles.all.indices)
+        return WpBubbles.all[index]
+    }
+
+    /** Inbox ki last-message preview exactly selected own/other bubble palette follow karti hai. */
+    private fun miniMessageBackground(outgoing: Boolean, palette: WpBubbleTheme): GradientDrawable {
+        val radius = dp(13).toFloat()
+        val small = dp(5).toFloat()
+        return GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            if (outgoing) palette.own else palette.other).apply {
+            cornerRadii = if (outgoing)
+                floatArrayOf(radius, radius, radius, radius, small, small, radius, radius)
+            else floatArrayOf(radius, radius, radius, radius, radius, radius, small, small)
+            setStroke(dp(1), palette.edge ?: Color.argb(if (outgoing) 51 else 66, 255, 255, 255))
+        }
     }
 
     private fun roundBox(fill: Int, stroke: Int, radiusDp: Int, strokeDp: Int): GradientDrawable =

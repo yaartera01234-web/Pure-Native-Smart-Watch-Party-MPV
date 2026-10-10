@@ -490,11 +490,14 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         }
         brand.addView(PartyBarsLogo(this), lp(dp(23f), dp(23f)))
         brand.addView(PartyGradientLabel(this, palette.accent).apply {
-            text = "Watch Party"
+            text = "Smart Party Plus"
             textSize = 18f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             includeFontPadding = false
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setSingleLine(true)
+            setAutoSizeTextTypeUniformWithConfiguration(12, 18, 1,
+                android.util.TypedValue.COMPLEX_UNIT_SP)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             leftMargin = dp(7f)
         })
         bar.addView(brand, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -553,7 +556,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             setTextColor(Color.WHITE)
         })
         box.addView(TextView(this).apply {
-            text = "Poore Watch Party Room ka rang badalta hai"
+            text = "Poore Party Room ka rang badalta hai"
             textSize = 11f
             setTextColor(palette.accentText)
         }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {

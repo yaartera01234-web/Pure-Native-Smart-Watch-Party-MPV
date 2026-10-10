@@ -721,7 +721,7 @@ class VoiceCallService : Service() {
         }
         // Dedicated system type/from: UI is centered without either member's ID/DP and
         // ordinary composer text can never masquerade as this call-history card.
-        FirebaseChat.send(this, chatId, ChatMsg(from = "Watch Party", text = text,
+        FirebaseChat.send(this, chatId, ChatMsg(from = "Smart Party Plus", text = text,
             ts = System.currentTimeMillis(), type = "call", dur = duration))
     }
 

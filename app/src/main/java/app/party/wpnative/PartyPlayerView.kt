@@ -562,7 +562,7 @@ private class RaveAudioCanvas(context: Context) : View(context) {
         c.drawText(trackTitle.take(28), tx, h * .48f, p)
         p.typeface = android.graphics.Typeface.DEFAULT
         p.color = sub; p.textSize = h * .055f
-        c.drawText("Watch Party · Now Playing", tx, h * .58f, p)
+        c.drawText("Smart Party Plus · Now Playing", tx, h * .58f, p)
 
         val base = h * .77f; val barW = maxOf(2f, w * .006f); val gap = barW * 1.75f
         p.shader = LinearGradient(0f, base - h * .15f, 0f, base, bars, null, Shader.TileMode.CLAMP)

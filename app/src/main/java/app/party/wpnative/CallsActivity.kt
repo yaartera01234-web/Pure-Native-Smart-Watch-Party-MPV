@@ -173,22 +173,22 @@ class CallsActivity : Activity() {
         row.setOnLongClickListener { showItemMenu(row, c); true }
 
         // Avatar: asli DP (image aaane tak pehla harf)
-        row.addView(DpStore.circle(this, c.name, c.color, 48), lp(dp(48), dp(48)))
+        row.addView(DpStore.circle(this, c.name, c.color, 42), lp(dp(42), dp(42)))
 
         // Naam + direction
         val info = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, dp(8), 0)
+            setPadding(dp(10), 0, dp(8), 0)
         }
         info.addView(TextView(this).apply {
             text = c.name
-            textSize = 15f
+            textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(Color.WHITE)
         })
         info.addView(TextView(this).apply {
             text = "${c.arrow} ${c.dir}"
-            textSize = 12f
+            textSize = 11f
             setTextColor(if (c.missed) hex("#fb7185") else hex("#a291c6"))
         }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(3) })
         row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -200,13 +200,13 @@ class CallsActivity : Activity() {
         }
         right.addView(TextView(this).apply {
             text = c.date
-            textSize = 11f
+            textSize = 10f
             gravity = Gravity.END
             setTextColor(hex("#8b78b3"))
         })
         right.addView(TextView(this).apply {
             text = c.time
-            textSize = 11f
+            textSize = 10f
             gravity = Gravity.END
             setTextColor(hex("#8b78b3"))
         })
@@ -216,12 +216,12 @@ class CallsActivity : Activity() {
         row.addView(FrameLayout(this).apply {
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
                 intArrayOf(hex("#22c55e"), hex("#10b981"))).apply { shape = GradientDrawable.OVAL }
-            addView(WpIcon(this@CallsActivity, "phone"), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+            addView(WpIcon(this@CallsActivity, "phone"), FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
             setOnClickListener {
                 VoiceCallActivity.startOutgoing(this@CallsActivity, c.record.peerName,
                     c.record.peerCode, c.record.chatId)
             }
-        }, lp(dp(42), dp(42)).apply { leftMargin = dp(12) })
+        }, lp(dp(36), dp(36)).apply { leftMargin = dp(10) })
 
         wrap.addView(row, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         wrap.addView(View(this).apply { setBackgroundColor(Color.argb(14, 255, 255, 255)) },
@@ -238,10 +238,10 @@ class CallsActivity : Activity() {
         if (calls.isEmpty()) {
             listBox.addView(TextView(this).apply {
                 text = "Koi call nahi"
-                textSize = 13f
+                textSize = 12f
                 gravity = Gravity.CENTER
                 setTextColor(hex("#8f7cb5"))
-                setPadding(0, dp(40), 0, 0)
+                setPadding(dp(12), dp(26), dp(12), dp(26))
             }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         } else {
             calls.forEach { listBox.addView(buildRow(it)) }

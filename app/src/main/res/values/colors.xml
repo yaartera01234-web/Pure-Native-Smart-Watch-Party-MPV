@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#050A2B</color>
+    <color name="brand_midnight">#05030D</color>
+    <color name="brand_violet">#241456</color>
+    <color name="brand_cyan">#22D3EE</color>
+    <color name="brand_magenta">#EC4899</color>
+</resources>

@@ -1,4 +1,4 @@
-name: "WP Native MPV023 - build APK"
+name: "Smart Party Plus - build verified signing input"
 
 on:
   push:
@@ -51,33 +51,38 @@ jobs:
           set -o pipefail
           gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
 
-      - name: Substitute exact MPV023 engine, align and sign APK
+      - name: Substitute exact MPV023 engine, align and verify signing input
         run: |
           set -euo pipefail
           exec > >(tee /tmp/swap.log) 2>&1
           SDK="$ANDROID_HOME/build-tools/35.0.0"
           BASE=$(find app/build/outputs/apk -name '*.apk' -type f | head -1)
           test -n "$BASE"
-          KEYSTORE=/tmp/mpv023/output-debug.keystore
+          KEYSTORE=/tmp/mpv023/ci-only.keystore
           keytool -genkeypair -noprompt -keystore "$KEYSTORE" \
             -storepass android -alias androiddebugkey -keypass android \
-            -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+            -dname 'CN=CI Verification Only,O=Smart Party Plus,C=SG' \
+            -keyalg RSA -keysize 2048 -validity 10000
           python3 tests/mpv023/engine_swap.py swap --work /tmp/mpv023 \
             --base "$BASE" --output /tmp/mpv023/unsigned.apk
-          "$SDK/zipalign" -P 16 -f 4 /tmp/mpv023/unsigned.apk /tmp/mpv023/aligned.apk
+          "$SDK/zipalign" -P 16 -f 4 /tmp/mpv023/unsigned.apk SmartPartyPlus-aligned-unsigned.apk
+          "$SDK/zipalign" -c -P 16 4 SmartPartyPlus-aligned-unsigned.apk
+          # CI key sirf compile/engine verification ke liye hai. Public final APK Arena
+          # workspace mein permanent private key se sign hoti hai; key kabhi Git mein nahi.
           "$SDK/apksigner" sign \
             --ks "$KEYSTORE" --ks-key-alias androiddebugkey \
             --ks-pass pass:android --key-pass pass:android \
-            --out WatchParty-FirstPage.apk /tmp/mpv023/aligned.apk
-          "$SDK/apksigner" verify --verbose --print-certs WatchParty-FirstPage.apk
-          "$SDK/zipalign" -c -P 16 4 WatchParty-FirstPage.apk
+            --out SmartPartyPlus-CI-Check.apk SmartPartyPlus-aligned-unsigned.apk
+          "$SDK/apksigner" verify --verbose --print-certs SmartPartyPlus-CI-Check.apk
+          "$SDK/zipalign" -c -P 16 4 SmartPartyPlus-CI-Check.apk
           python3 tests/mpv023/engine_swap.py verify --work /tmp/mpv023 \
-            --base "$BASE" --output WatchParty-FirstPage.apk
-          unzip -p WatchParty-FirstPage.apk lib/arm64-v8a/libmpv.so | \
+            --base "$BASE" --output SmartPartyPlus-CI-Check.apk
+          unzip -p SmartPartyPlus-CI-Check.apk lib/arm64-v8a/libmpv.so | \
             strings | grep -F 'mpv v0.41.0-252-gc401ef9c3'
-          unzip -p WatchParty-FirstPage.apk lib/arm64-v8a/libavcodec.so | \
+          unzip -p SmartPartyPlus-CI-Check.apk lib/arm64-v8a/libavcodec.so | \
             strings | grep -F 'FFmpeg version N-123143-g0540b42657'
-          sha256sum WatchParty-FirstPage.apk | tee SHA256SUMS.txt
+          cp "$SDK/lib/apksigner.jar" apksigner.jar
+          sha256sum SmartPartyPlus-CI-Check.apk | tee CI-CHECK-SHA256SUMS.txt
 
       # Fail ho to poora Gradle log branch par daal do (artefact download
       # har jagah se possible nahi hota — log seedha padhne ke liye).
@@ -99,22 +104,15 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: watchparty-firstpage
+          name: smart-party-plus-signing-input
           path: |
-            WatchParty-FirstPage.apk
-            SHA256SUMS.txt
+            SmartPartyPlus-aligned-unsigned.apk
+            SmartPartyPlus-CI-Check.apk
+            CI-CHECK-SHA256SUMS.txt
+            apksigner.jar
             tests/mpv023/manifest.json
             tests/mpv023/README.md
 
-      # Actions artifacts GitHub login maangte hain. Arena branch par verified APK bhi
-      # publish karo taa-ke public repo ka seedha shareable /raw/ download link chale.
-      # GITHUB_TOKEN ki push naya workflow trigger nahi karti, isliye build loop nahi banta.
-      - name: Publish direct-download APK
-        if: github.event_name == 'push' && startsWith(github.ref_name, 'arena/')
-        run: |
-          set -euo pipefail
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@example.com"
-          git add -f WatchParty-FirstPage.apk SHA256SUMS.txt
-          git commit -m "Publish direct-install APK [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+      # Final release is deliberately NOT auto-signed or auto-published here. Arena signs the
+      # aligned input with the permanent private release key, verifies it, and then publishes
+      # WatchParty-FirstPage.apk. This prevents accidental future signature changes.

@@ -51,13 +51,13 @@ class PartyPlayerService : Service() {
         }
     }
 
-    private var title = "Watch Party"
+    private var title = "Smart Party Plus"
     private var playing = false
     private lateinit var mediaSession: MediaSession
 
     override fun onCreate() {
         super.onCreate()
-        mediaSession = MediaSession(this, "WatchPartyPlayer").apply {
+        mediaSession = MediaSession(this, "SmartPartyPlusPlayer").apply {
             setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
                 MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
             setCallback(object : MediaSession.Callback() {
@@ -109,8 +109,8 @@ class PartyPlayerService : Service() {
                 PlaybackState.PLAYBACK_POSITION_UNKNOWN, if (playing) 1f else 0f)
             .build())
         mediaSession.setMetadata(MediaMetadata.Builder()
-            .putString(MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "Watch Party" })
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, "Watch Party · Room sync")
+            .putString(MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "Smart Party Plus" })
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, "Smart Party Plus · Room sync")
             .build())
         mediaSession.isActive = true
     }
@@ -139,7 +139,7 @@ class PartyPlayerService : Service() {
         val next = Notification.Action.Builder(android.R.drawable.ic_media_next,
             "Next song", service(ACTION_NEXT, 6)).build()
         return builder.setSmallIcon(R.drawable.ic_notif)
-            .setContentTitle(title.ifBlank { "Watch Party" })
+            .setContentTitle(title.ifBlank { "Smart Party Plus" })
             .setContentText("Native MPV · Party sync")
             .setContentIntent(open)
             .setOnlyAlertOnce(true).setOngoing(playing).setCategory(Notification.CATEGORY_TRANSPORT)

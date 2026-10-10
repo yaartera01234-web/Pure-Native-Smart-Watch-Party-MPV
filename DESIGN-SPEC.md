@@ -1,4 +1,4 @@
-# Watch Party — Native Design Spec (website se nikal kar likha gaya)
+# Smart Party Plus — Native Design Spec (Original source se audited)
 
 > **Ye file design ki "nakal" hai, code ki nahi.**
 > App **A to Z pure native** hai: koi WebView nahi, koi HTML/CSS/JS nahi, koi assets nahi,
@@ -106,7 +106,7 @@ base color: #05030d
 - Background: `#170d35 → #0b1027 → #03040b`; center avatar ke gird cyan/purple pulse rings aur voice bars.
 - Incoming controls: Decline red + Answer green. Connecting/outgoing: End. Active/reconnecting: Mute, End, Speaker/Earpiece.
 - Top `⌄` Activity ko minimize karta hai; foreground service/WebRTC call jari rehti aur baqi app screens par 62dp mini bar restore/controls deti hai.
-- Movie call ke dauran audible rehti hai: local/remote PCM speech detection par 28% tak smooth duck, 720ms silence ke baad smooth 100% restore; koi Party pause/seek nahi.
+- Movie call ke dauran audible rehti hai: adaptive local/remote PCM gate 260ms sustained speech confirm karke 45% tak smooth duck karta hai; 900ms silence ke baad smooth 100% restore; koi Party pause/seek nahi.
 - Calls page real latest-100 history se direction, missed/result, date/time/duration dikhata hai aur phone button callback karta hai.
 - Connected built-in earpiece par hi proximity screen-off; ringing/connecting/reconnecting/speaker/wired/Bluetooth par off.
 
@@ -119,4 +119,5 @@ base color: #05030d
 - [x] Private native WebRTC/Opus 1-to-1 voice calls, notifications, routing, reconnect aur summaries
 - [x] Chat/Room replies, reactions, photo, mic, paging, retained cache aur cleanup
 - [x] 12 bubble options aur approved theme coupling
-- [ ] DM GIF (deliberately end-of-project remaining item)
+- [x] DM/Party keyboard GIF, reactions, exact reply navigation aur two-way call audio
+- [x] Smart Party Plus production name, adaptive icon and permanent release-signing pipeline

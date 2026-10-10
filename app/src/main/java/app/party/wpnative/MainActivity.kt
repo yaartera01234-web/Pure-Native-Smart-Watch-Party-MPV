@@ -183,10 +183,13 @@ class MainActivity : Activity() {
             start()
         }
         titleView = GradientText(this).apply {
-            text = "Watch Party"
+            text = "Smart Party Plus"
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             textSize = 32f
             gravity = Gravity.CENTER
+            setSingleLine(true)
+            setAutoSizeTextTypeUniformWithConfiguration(23, 32, 1,
+                android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         joinCard.addView(titleView, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5); bottomMargin = dp(5) })
 

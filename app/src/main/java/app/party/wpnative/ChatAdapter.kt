@@ -209,7 +209,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
             bubble = LinearLayout(host.ctx()).apply {
                 orientation = LinearLayout.VERTICAL
                 if (partyStyle) setPadding(dp(12), dp(8), dp(12), dp(6))
-                else setPadding(dp(14), dp(10), dp(14), dp(10))
+                else setPadding(dp(13), dp(9), dp(13), dp(9))
                 background = if (mine) host.mineBubbleBg() else host.peerBubbleBg()
                 if (partyStyle) setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                 else if (mine) elevation = dp(6).toFloat()
@@ -339,10 +339,10 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
             textTv = TextView(host.ctx()).apply {
-                textSize = 14f
+                textSize = if (partyStyle) 14f else 13.5f
                 setTextColor(if (mine) host.mineBubbleText() else host.peerBubbleText())
                 includeFontPadding = true
-                setLineSpacing(0f, if (partyStyle) 1.35f else 1.55f)
+                setLineSpacing(0f, if (partyStyle) 1.35f else 1.45f)
                 maxWidth = host.bubbleMaxWidth()
             }
             bubble.addView(textTv)
