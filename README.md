@@ -11,12 +11,15 @@ Ab shamil hai:
 - EMQX, HiveMQ aur tyckr ke exact WSS endpoints par encrypted native MQTT Room transport
 - Live Room members, reconnect-safe presence aur explicit confirmed Leave
 - Room text/reply/reactions/photo/voice; media tower par AES-GCM encrypted retained blobs
-- Har member ke explicit Leave par us phone ki Room chat/media clear; aakhri member ke Leave par server chat/media bhi clear
+- Explicit Leave par us phone ki Room chat/media cache saaf; Room khaali hone ke baad bhi shared playback/media state retained rehti hai
+- `WP1-XXXX-XXXX` Friend Codes: own-code Copy/Share, lookup, requests, Accept/Reject aur stable code-backed DM chats
 - Playlist chat se independent retained rehti hai, YouTube thumbnail/title aur custom rename/remove ke sath
 - Party chat quick emoji, swipe reply, reaction chips aur flying emoji
 - Keyboard-safe Room typing mode: keyboard khulte hi composer aur message thread visible rehte hain
 
 Room chat maximum 120 messages rakhti hai. Disconnect/glitch ko Leave nahi maana jata. Native MPV player Room playback ko MQTT/WP4 sync ke sath chalata hai.
+
+Friend Code directory aur Message Requests ke liye repository ka `firestore.rules` Firebase Console mein publish hona chahiye. Existing DM messages, presence aur typing bhi isi Firestore project par rehte hain; Firebase Storage istemal nahi hoti.
 
 ## MPV023 engine
 

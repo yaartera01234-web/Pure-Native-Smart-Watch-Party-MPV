@@ -3,10 +3,9 @@ rules_version = '2';
 // Smart Watch Party — Firestore ke niyam.
 // Firebase console -> Build -> Firestore Database -> Rules -> paste kar ke Publish.
 //
-// NOTE: abhi Firebase Auth nahi hai, is liye "kaun hai" check nahi ho sakta.
-// Is liye sirf itna control hai: sirf wahi 3 jagah (msgs / users / typing)
-// likhne ki ijazat, aur data ki shape theek honi chahiye.
-// Auth aane ke baad har chat par "sirf dono parties" wala check laga denge.
+// NOTE: abhi Firebase Auth nahi hai, is liye "kaun hai" cryptographically check nahi ho
+// sakta. Collections aur data-shape ko sakhti se limit kiya gaya hai. Auth aane ke baad
+// participants/code ownership ko UID ke saath bind karna chahiye.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -19,20 +18,59 @@ service cloud.firestore {
       allow delete: if true;
     }
 
-    // 2) Presence: users/{naam} = { online, seenAt }
+    // 2) Presence + optional FCM token.
     match /users/{name} {
       allow read: if true;
-      allow write: if request.resource.data.keys().hasOnly(['online', 'seenAt'])
-                   && request.resource.data.online is bool;
+      allow write: if request.resource.data.keys().hasOnly(['online', 'seenAt', 'fcmToken'])
+                   && (!('online' in request.resource.data) || request.resource.data.online is bool)
+                   && (!('seenAt' in request.resource.data) || request.resource.data.seenAt is number)
+                   && (!('fcmToken' in request.resource.data) ||
+                       (request.resource.data.fcmToken is string && request.resource.data.fcmToken.size() <= 4096));
     }
 
     // 3) Typing: typing/{chatId} = { who, ts }
     match /typing/{chatId} {
       allow read: if true;
-      allow write: if request.resource.data.keys().hasOnly(['who', 'ts']);
+      allow write: if request.resource.data.keys().hasOnly(['who', 'ts'])
+                   && request.resource.data.who is string
+                   && request.resource.data.who.size() <= 40
+                   && request.resource.data.ts is number;
     }
 
-    // Message ki shape theek hai?
+    // 4) Public Friend Code directory: WP1 payload -> current display profile.
+    match /friendCodes/{code} {
+      allow read: if true;
+      allow write: if code.size() == 8
+                   && request.resource.data.keys().hasOnly(['code', 'name', 'color', 'updatedAt'])
+                   && request.resource.data.code == code
+                   && request.resource.data.name is string
+                   && request.resource.data.name.size() > 0
+                   && request.resource.data.name.size() <= 40
+                   && request.resource.data.color is string
+                   && request.resource.data.color.size() <= 16
+                   && request.resource.data.updatedAt is number;
+    }
+
+    // 5) First-contact requests: friendRequests/{targetCode}/items/{senderCode}.
+    match /friendRequests/{targetCode}/items/{senderCode} {
+      allow read: if true;
+      allow delete: if true;
+      allow create, update: if targetCode.size() == 8
+                            && senderCode.size() == 8
+                            && targetCode != senderCode
+                            && request.resource.data.keys().hasOnly(
+                              ['code', 'name', 'color', 'preview', 'ts'])
+                            && request.resource.data.code == senderCode
+                            && request.resource.data.name is string
+                            && request.resource.data.name.size() > 0
+                            && request.resource.data.name.size() <= 40
+                            && request.resource.data.color is string
+                            && request.resource.data.color.size() <= 16
+                            && request.resource.data.preview is string
+                            && request.resource.data.preview.size() <= 160
+                            && request.resource.data.ts is number;
+    }
+
     function isValidMsg(d) {
       return d.keys().hasAll(['from', 'text', 'ts'])
         && d['from'] is string && d['from'].size() <= 40

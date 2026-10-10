@@ -255,8 +255,9 @@ class MainActivity : Activity() {
                 if (n.isEmpty() || r.isEmpty()) {
                     Toast.makeText(this@MainActivity, "Naam aur room name likho", Toast.LENGTH_SHORT).show()
                 } else {
-                    // Yahi naam chat ki pehchaan hai (doston ko bhi yahi dikhega)
+                    // Display naam + stable Friend Code profile dono publish/update karo.
                     WpUser.setName(this@MainActivity, n)
+                    FirebaseChat.publishFriendProfile(this@MainActivity)
                     FirebaseChat.setPresence(this@MainActivity, n, true)
                     // Join ke baad next page: Messages (Inbox)
                     startActivity(Intent(this@MainActivity, InboxActivity::class.java))

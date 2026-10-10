@@ -8,6 +8,22 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 
+/** Public Friend Code profile returned by the code directory. */
+data class FriendProfile(
+    val code: String,
+    val name: String,
+    val color: String = "#8b72ff"
+)
+
+/** First-contact request shown above the normal Inbox chat rows. */
+data class FriendRequest(
+    val code: String,
+    val name: String,
+    val color: String = "#8b72ff",
+    val preview: String = "👋 Friend request",
+    val ts: Long = 0L
+)
+
 /**
  * Firebase (Firestore) ka poora raasta — messages, presence, typing.
  *
@@ -16,9 +32,11 @@ import com.google.firebase.firestore.SetOptions
  *    bhi chalega (purana demo mode) — koi crash nahi. JSON aate hi sab live ho jayega.
  *
  * Structure (Firestore):
- *   chats/{chatId}/msgs/{msgId}   -> ChatMsg fields
- *   users/{naam}                  -> { online, seenAt }
- *   typing/{chatId}               -> { who, ts }
+ *   chats/{chatId}/msgs/{msgId}                    -> ChatMsg fields
+ *   users/{naam}                                   -> presence/token
+ *   typing/{chatId}                                -> { who, ts }
+ *   friendCodes/{rawCode}                          -> public profile lookup
+ *   friendRequests/{targetCode}/items/{senderCode} -> pending first contact
  */
 object FirebaseChat {
 
@@ -320,5 +338,114 @@ object FirebaseChat {
                     onTyping(who.isNotBlank() && who != me && fresh)
                 }
         } catch (t: Throwable) { null }
+    }
+
+    // ----------------------------------------------------- Friend Codes / Requests
+
+    /** Apna stable WP1 code directory mein publish/update karo. */
+    fun publishFriendProfile(ctx: Context) {
+        if (!isReady(ctx)) return
+        val code = WpUser.friendCodeRaw(ctx)
+        val name = WpUser.me(ctx).trim().take(40)
+        if (code.length != 8 || name.isBlank()) return
+        try {
+            db(ctx).collection("friendCodes").document(code).set(
+                mapOf(
+                    "code" to code,
+                    "name" to name,
+                    "color" to "#8b72ff",
+                    "updatedAt" to System.currentTimeMillis()
+                ),
+                SetOptions.merge()
+            )
+        } catch (_: Throwable) { }
+    }
+
+    /** Code se asli public display name/profile dhoondo. */
+    fun findFriendProfile(ctx: Context, code: String, cb: (FriendProfile?) -> Unit) {
+        val raw = WpUser.normalizeFriendCode(code)
+        if (!isReady(ctx) || raw.length != 8) { cb(null); return }
+        try {
+            db(ctx).collection("friendCodes").document(raw).get()
+                .addOnSuccessListener { snap ->
+                    val name = snap.getString("name")?.trim().orEmpty().take(40)
+                    if (!snap.exists() || name.isBlank()) cb(null)
+                    else cb(FriendProfile(raw, name, snap.getString("color") ?: "#8b72ff"))
+                }
+                .addOnFailureListener { cb(null) }
+        } catch (_: Throwable) { cb(null) }
+    }
+
+    /** Target code ke Inbox mein first-contact request rakho/refresh karo. */
+    fun sendFriendRequest(
+        ctx: Context,
+        targetCode: String,
+        preview: String,
+        cb: (Boolean) -> Unit
+    ) {
+        val target = WpUser.normalizeFriendCode(targetCode)
+        val mine = WpUser.friendCodeRaw(ctx)
+        if (!isReady(ctx) || target.length != 8 || mine.length != 8 || target == mine) {
+            cb(false); return
+        }
+        try {
+            db(ctx).collection("friendRequests").document(target)
+                .collection("items").document(mine)
+                .set(
+                    mapOf(
+                        "code" to mine,
+                        "name" to WpUser.me(ctx).take(40),
+                        "color" to "#8b72ff",
+                        "preview" to preview.take(160),
+                        "ts" to System.currentTimeMillis()
+                    ),
+                    SetOptions.merge()
+                )
+                .addOnSuccessListener { cb(true) }
+                .addOnFailureListener { cb(false) }
+        } catch (_: Throwable) { cb(false) }
+    }
+
+    /** Apne code par aane wali requests live suno. */
+    fun listenFriendRequests(
+        ctx: Context,
+        onRequests: (List<FriendRequest>) -> Unit
+    ): ListenerRegistration? {
+        if (!isReady(ctx)) { onRequests(emptyList()); return null }
+        val mine = WpUser.friendCodeRaw(ctx)
+        return try {
+            db(ctx).collection("friendRequests").document(mine).collection("items")
+                .addSnapshotListener { snap, err ->
+                    if (err != null || snap == null) { onRequests(emptyList()); return@addSnapshotListener }
+                    val list = snap.documents.mapNotNull { d ->
+                        val code = WpUser.normalizeFriendCode(d.getString("code") ?: d.id)
+                        val name = d.getString("name")?.trim().orEmpty().take(40)
+                        if (code.length != 8 || name.isBlank() || code == mine) null
+                        else FriendRequest(
+                            code = code,
+                            name = name,
+                            color = d.getString("color") ?: "#8b72ff",
+                            preview = d.getString("preview") ?: "👋 Friend request",
+                            ts = d.getLong("ts") ?: 0L
+                        )
+                    }.sortedByDescending { it.ts }
+                    onRequests(list)
+                }
+        } catch (_: Throwable) {
+            onRequests(emptyList())
+            null
+        }
+    }
+
+    fun removeFriendRequest(ctx: Context, senderCode: String, cb: ((Boolean) -> Unit)? = null) {
+        val mine = WpUser.friendCodeRaw(ctx)
+        val sender = WpUser.normalizeFriendCode(senderCode)
+        if (!isReady(ctx) || sender.length != 8) { cb?.invoke(false); return }
+        try {
+            db(ctx).collection("friendRequests").document(mine)
+                .collection("items").document(sender).delete()
+                .addOnSuccessListener { cb?.invoke(true) }
+                .addOnFailureListener { cb?.invoke(false) }
+        } catch (_: Throwable) { cb?.invoke(false) }
     }
 }

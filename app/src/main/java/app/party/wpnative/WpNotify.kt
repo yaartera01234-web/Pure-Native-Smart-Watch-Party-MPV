@@ -63,7 +63,7 @@ object WpNotify {
     }
 
     /** Naye message ki notification (Reply button ke saath). */
-    fun post(ctx: Context, from: String, text: String, chatId: String) {
+    fun post(ctx: Context, from: String, text: String, chatId: String, friendCode: String = "") {
         synchronized(this) {
             val key = "$from|$text"
             val now = System.currentTimeMillis()
@@ -78,6 +78,8 @@ object WpNotify {
 
             val openIntent = Intent(ctx, ChatActivity::class.java)
                 .putExtra("name", from)
+                .putExtra("friendCode", friendCode)
+                .putExtra("chatId", chatId)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             val imm = if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
             val openPi = PendingIntent.getActivity(ctx, nid, openIntent,

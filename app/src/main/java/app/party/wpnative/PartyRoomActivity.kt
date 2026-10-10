@@ -1728,6 +1728,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     // ChatAdapter ke liye Party Room host. Bubble gestures/design DM ke exact engine se.
     override fun ctx(): Context = this
     override fun peerName(): String = "Party"
+    override fun typingName(): String = partyTypingNames.joinToString(", ").ifBlank { peerName() }
     override fun meName(): String = WpUser.me(this)
     override fun peerColorInt(): Int = palette.accent[2]
     override fun originalPartyChat(): Boolean = true

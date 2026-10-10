@@ -39,6 +39,8 @@ interface ChatHost {
     fun messageName(m: Msg): String = if (m.own) "You" else m.senderName.ifBlank { peerName() }
     fun messageColor(m: Msg): Int = if (m.own) hex("#f9a8d4")
         else m.senderColor.takeIf { it != 0 } ?: peerColorInt()
+    /** Typing row ka live naam. DM mein peer; Room mein actual typing member(s). */
+    fun typingName(): String = peerName()
     /** Party Room website geometry; DM ka approved 22dp look alag hi rehta hai. */
     fun originalPartyChat(): Boolean = false
     fun tick(m: Msg): CharSequence
@@ -131,6 +133,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 h.bind(m, anim)
             }
             is DayVH -> h.bind(rows[pos].day ?: "")
+            is TypingVH -> h.bind()
         }
     }
 
@@ -725,7 +728,18 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
         fun bind(day: String) { tv.text = day }
     }
 
-    private class TypingVH(host: ChatHost) : RecyclerView.ViewHolder(build(host)) {
+    private class TypingVH(private val host: ChatHost) : RecyclerView.ViewHolder(build(host)) {
+        private val row = itemView as LinearLayout
+        private val avatar = row.getChildAt(0) as TextView
+        private val nameTv = (row.getChildAt(1) as LinearLayout).getChildAt(0) as TextView
+
+        /** Recycler hone par bhi Room ka abhi wala actual member naam lagao; "Party" kabhi nahi. */
+        fun bind() {
+            val name = host.typingName().trim().ifBlank { host.peerName() }
+            avatar.text = name.firstOrNull()?.uppercase() ?: "?"
+            nameTv.text = name
+        }
+
         companion object {
             private fun build(host: ChatHost): View {
                 val row = LinearLayout(host.ctx()).apply {
@@ -735,7 +749,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 }
                 row.addView(TextView(host.ctx()).apply {
-                    text = host.peerName().first().uppercase()
+                    text = "?"
                     textSize = 13f
                     gravity = Gravity.CENTER
                     setTypeface(typeface, Typeface.BOLD)
@@ -748,7 +762,7 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
 
                 val col = LinearLayout(host.ctx()).apply { orientation = LinearLayout.VERTICAL }
                 col.addView(TextView(host.ctx()).apply {
-                    text = host.peerName()
+                    text = ""
                     textSize = 11f
                     setTypeface(typeface, Typeface.BOLD)
                     setTextColor(host.peerColorInt())

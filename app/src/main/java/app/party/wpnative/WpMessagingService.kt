@@ -30,8 +30,9 @@ class WpMessagingService : FirebaseMessagingService() {
         val d = msg.data
         val from = d["from"] ?: return
         val body = d["text"] ?: d["body"] ?: return
-        val chatId = d["chatId"] ?: WpUser.chatId(WpUser.me(this), from)
-        WpNotify.post(this, from, body, chatId)
+        val friendCode = d["friendCode"] ?: Friends.codeForName(this, from)
+        val chatId = d["chatId"] ?: WpUser.friendChatId(this, from, friendCode)
+        WpNotify.post(this, from, body, chatId, friendCode)
     }
 }
 
@@ -46,7 +47,8 @@ class ReplyReceiver : BroadcastReceiver() {
         if (ctx == null || intent == null) return
         if (WpNotify.ACTION_REPLY != intent.action) return
         val peer = intent.getStringExtra("peer") ?: return
-        val chatId = intent.getStringExtra("chatId") ?: WpUser.chatId(WpUser.me(ctx), peer)
+        val chatId = intent.getStringExtra("chatId")
+            ?: WpUser.friendChatId(ctx, peer, Friends.codeForName(ctx, peer))
         val text = try {
             RemoteInput.getResultsFromIntent(intent)
                 ?.getCharSequence(WpNotify.REPLY_KEY)?.toString()?.trim()

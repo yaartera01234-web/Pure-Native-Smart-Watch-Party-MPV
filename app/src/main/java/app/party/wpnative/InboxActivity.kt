@@ -4,6 +4,9 @@ import android.app.Activity
 import android.graphics.drawable.ColorDrawable
 import android.view.Window
 import android.app.Dialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -17,6 +20,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.google.firebase.firestore.ListenerRegistration
 
 /**
  * Messages / Inbox (website-v61 wali #dm-sheet > #dm-view-inbox ka design).
@@ -31,11 +35,15 @@ class InboxActivity : Activity() {
         val online: Boolean,
         val unread: Boolean,
         val color: Int,
-        val pinned: Boolean = false
+        val pinned: Boolean = false,
+        val code: String = ""
     )
 
     /** Rows sirf asli add kiye hue doston ke liye; test Dost 1..4 hata diye. */
     private val chats = mutableListOf<Friend>()
+    private val incomingRequests = mutableListOf<FriendRequest>()
+    private var requestListener: ListenerRegistration? = null
+    private var searchQuery = ""
 
     private lateinit var listBox: LinearLayout
 
@@ -48,6 +56,18 @@ class InboxActivity : Activity() {
         askNotifyPermission()
         BgMsgService.start(this)      // app band hone pe bhi notification
         setContentView(buildScreen())
+        FirebaseChat.publishFriendProfile(this)
+        requestListener = FirebaseChat.listenFriendRequests(this) { list ->
+            incomingRequests.clear()
+            incomingRequests.addAll(list.filterNot { Friends.hasCode(this, it.code) })
+            if (::listBox.isInitialized) fillInbox()
+        }
+    }
+
+    override fun onDestroy() {
+        requestListener?.remove()
+        requestListener = null
+        super.onDestroy()
     }
 
     /** Android 13+ par notification ki ijazat (push ke liye zaroori). */
@@ -63,6 +83,7 @@ class InboxActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        FirebaseChat.publishFriendProfile(this)
         // Chat screen se koi friend remove hua ho to list turant saaf ho jaye —
         // magar kuch na badla ho to bekaar dobara mat banao (tab badalte waqt jhatka na ho)
         if (::listBox.isInitialized && listSignature() != listSig) {
@@ -73,7 +94,8 @@ class InboxActivity : Activity() {
 
     /** List ka "naksha" — is se pata chalta hai ke dobara banane ki zarurat hai ya nahi. */
     private fun listSignature(): String =
-        Friends.all(this).joinToString(",") + "#" +
+        Friends.entries(this).joinToString(",") { "${it.code}:${it.name}" } + "#" +
+            incomingRequests.joinToString(",") { "${it.code}:${it.ts}" } + "#" +
             chats.joinToString(",") { "${it.name}:${it.pinned}:${it.last}:${it.unread}" }
 
     private fun buildScreen(): View {
@@ -94,15 +116,6 @@ class InboxActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(2), dp(10), dp(14))
         }
-        list.addView(TextView(this).apply {
-            text = "CHATS"
-            textSize = 12f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            letterSpacing = 0.12f
-            setTextColor(hex("#A78BFA"))
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            setMargins(dp(4), dp(10), 0, dp(7))
-        })
         listBox = list
         fillInbox()
         listSig = listSignature()      // abhi ban chuki -> onResume mein bekaar na bane
@@ -170,6 +183,14 @@ class InboxActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT
             setPadding(dp(12), 0, dp(12), 0)
             background = roundBox(Color.argb(15, 255, 255, 255), Color.argb(20, 255, 255, 255), 11, 1)
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    searchQuery = s?.toString()?.trim().orEmpty()
+                    if (::listBox.isInitialized) fillInbox()
+                }
+            })
         }
         wrap.addView(input, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
         return wrap
@@ -186,7 +207,10 @@ class InboxActivity : Activity() {
                 16, 1
             )
             setOnClickListener {
-                startActivity(Intent(this@InboxActivity, ChatActivity::class.java).putExtra("name", f.name))
+                startActivity(Intent(this@InboxActivity, ChatActivity::class.java)
+                    .putExtra("name", f.name)
+                    .putExtra("friendCode", f.code)
+                    .putExtra("chatId", WpUser.friendChatId(this@InboxActivity, f.name, f.code)))
             }
         }
 
@@ -274,14 +298,290 @@ class InboxActivity : Activity() {
         ))
     }
 
-    /** 👤+ : naya dost jodo (dono phone par ek hi naam likhna hoga). */
+    /**
+     * Original Friend Code view: apna code, Copy/Share, peer-code validation/lookup,
+     * phir real Firestore request + greeting. Koi sample name-only shortcut nahi.
+     */
     private fun addFriend() {
-        askTextDialog(this, "Naya dost jodo", "Dost ka naam", "") { n ->
-            if (n.isBlank()) return@askTextDialog
-            Friends.add(this, n)
-            fillInbox()
-            Toast.makeText(this, "$n jod diya", Toast.LENGTH_SHORT).show()
+        FirebaseChat.publishFriendProfile(this)
+        val dlg = Dialog(this)
+        dlg.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(18))
+            background = GradientDrawable().apply {
+                gradientType = GradientDrawable.RADIAL_GRADIENT
+                setColors(intArrayOf(hex("#241456"), hex("#130933"), hex("#05030d")))
+                setGradientCenter(0.5f, 0f)
+                gradientRadius = resources.displayMetrics.heightPixels * 0.8f
+            }
         }
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(this).apply {
+            text = "👤  Add Friends"
+            textSize = 18f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(squareBtn("✕", gradient = false).apply { setOnClickListener { dlg.dismiss() } },
+            lp(dp(38), dp(38)))
+        page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(12)
+        })
+
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val ownCode = WpUser.friendCode(this)
+        val codeCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(16), dp(18), dp(16), dp(16))
+            background = roundBox(Color.argb(38, 139, 114, 255), Color.argb(95, 84, 232, 255), 20, 1)
+        }
+        codeCard.addView(TextView(this).apply {
+            text = "Tumhara Friend Code (dost ko bhejo)"
+            textSize = 11.5f
+            gravity = Gravity.CENTER
+            setTextColor(hex("#bdb5d4"))
+        })
+        codeCard.addView(TextView(this).apply {
+            text = ownCode
+            textSize = 25f
+            letterSpacing = 0.08f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(hex("#54e8ff"))
+        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(7); bottomMargin = dp(12)
+        })
+        val codeButtons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val copy = friendCodeButton("📋  Copy", true)
+        val share = friendCodeButton("📲  Share", false)
+        codeButtons.addView(copy, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(5) })
+        codeButtons.addView(share, LinearLayout.LayoutParams(0, dp(44), 1f).apply { leftMargin = dp(5) })
+        codeCard.addView(codeButtons, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        body.addView(codeCard, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        val addBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(15), dp(14), dp(14))
+            background = roundBox(Color.argb(18, 255, 255, 255), Color.argb(35, 255, 255, 255), 18, 1)
+        }
+        addBox.addView(TextView(this).apply {
+            text = "Dost ka code likho / paste karo"
+            textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        })
+        val peerInput = EditText(this).apply {
+            hint = "WP1-XXXX-XXXX"
+            setHintTextColor(hex("#777089"))
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            filters = arrayOf(android.text.InputFilter.LengthFilter(13))
+            setPadding(dp(12), 0, dp(12), 0)
+            background = roundBox(Color.argb(95, 8, 5, 20), Color.argb(55, 139, 114, 255), 12, 1)
+        }
+        addBox.addView(peerInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+            topMargin = dp(10); bottomMargin = dp(10)
+        })
+        val find = friendCodeButton("🔍  Dost dhoondo", true)
+        addBox.addView(find, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(45)))
+        body.addView(addBox, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(12)
+        })
+
+        var foundProfile: FriendProfile? = null
+        val found = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            visibility = View.GONE
+            background = roundBox(Color.argb(30, 52, 211, 153), Color.argb(90, 52, 211, 153), 18, 1)
+        }
+        val foundTop = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val foundAvatar = TextView(this).apply {
+            text = "?"
+            textSize = 17f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(hex("#8b72ff")) }
+        }
+        foundTop.addView(foundAvatar, lp(dp(42), dp(42)))
+        val foundInfo = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val foundName = TextView(this).apply {
+            textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        }
+        val foundCode = TextView(this).apply {
+            textSize = 11f
+            setTextColor(hex("#9ef5d2"))
+        }
+        foundInfo.addView(foundName)
+        foundInfo.addView(foundCode)
+        foundTop.addView(foundInfo, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            leftMargin = dp(11)
+        })
+        found.addView(foundTop)
+        val request = friendCodeButton("✉️  Message bhejo / request", true)
+        found.addView(request, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(45)).apply { topMargin = dp(12) })
+        body.addView(found, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(12)
+        })
+
+        body.addView(TextView(this).apply {
+            text = "🔒  Friend Code dono handsets ki stable pehchaan hai. Pehli dafa message karne wala Request mein aata hai; Accept ke baad woh normal chat list mein aa jata hai."
+            textSize = 11.5f
+            setTextColor(hex("#aaa1c2"))
+            setLineSpacing(0f, 1.25f)
+            setPadding(dp(3), dp(14), dp(3), dp(10))
+        })
+
+        val scroll = ScrollView(this).apply { addView(body) }
+        page.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        copy.setOnClickListener {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("Watch Party Friend Code", ownCode))
+            Toast.makeText(this, "📋 Code copy ho gaya", Toast.LENGTH_SHORT).show()
+        }
+        share.setOnClickListener {
+            val text = "Watch Party pe mujhe add karo 👇\nMera code: $ownCode"
+            try {
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                }, "Friend Code share karo"))
+            } catch (_: Throwable) {
+                Toast.makeText(this, "Code: $ownCode", Toast.LENGTH_LONG).show()
+            }
+        }
+
+        var formatting = false
+        peerInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (formatting) return
+                val raw = WpUser.normalizeFriendCode(s?.toString())
+                val pretty = when {
+                    raw.isEmpty() -> ""
+                    raw.length <= 4 -> "WP1-$raw"
+                    else -> "WP1-${raw.take(4)}-${raw.drop(4)}"
+                }
+                if (pretty != s?.toString()) {
+                    formatting = true
+                    peerInput.setText(pretty)
+                    peerInput.setSelection(pretty.length)
+                    formatting = false
+                }
+                foundProfile = null
+                found.visibility = View.GONE
+            }
+        })
+
+        find.setOnClickListener {
+            val raw = WpUser.normalizeFriendCode(peerInput.text.toString())
+            when {
+                raw.length != 8 -> Toast.makeText(this, "⚠️ Poora code likho (WP1-XXXX-XXXX)", Toast.LENGTH_SHORT).show()
+                raw == WpUser.friendCodeRaw(this) -> Toast.makeText(this, "😂 Ye tumhara apna code hai!", Toast.LENGTH_SHORT).show()
+                else -> {
+                    find.isEnabled = false
+                    find.alpha = 0.55f
+                    find.text = "Dhoond rahe hain…"
+                    FirebaseChat.findFriendProfile(this, raw) { profile ->
+                        find.isEnabled = true
+                        find.alpha = 1f
+                        find.text = "🔍  Dost dhoondo"
+                        if (profile == null) {
+                            foundProfile = null
+                            found.visibility = View.GONE
+                            Toast.makeText(this, "Is code ka dost nahi mila — usay app ek dafa kholne ko kaho", Toast.LENGTH_LONG).show()
+                            return@findFriendProfile
+                        }
+                        foundProfile = profile
+                        foundName.text = profile.name
+                        foundCode.text = "${WpUser.formatFriendCode(profile.code)} · code theek hai"
+                        foundAvatar.text = profile.name.firstOrNull()?.uppercase() ?: "?"
+                        val already = Friends.hasCode(this, profile.code)
+                        request.text = if (already) "💬  Chat kholo" else "✉️  Message bhejo / request"
+                        found.visibility = View.VISIBLE
+                        Toast.makeText(this, "✅ Code theek hai", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
+        request.setOnClickListener {
+            val profile = foundProfile ?: return@setOnClickListener
+            if (Friends.hasCode(this, profile.code)) {
+                dlg.dismiss()
+                openFriendChat(profile)
+                return@setOnClickListener
+            }
+            val greeting = "👋 Salam! Main ${WpUser.me(this)} hoon — Watch Party pe milte hain."
+            request.isEnabled = false
+            request.alpha = 0.55f
+            request.text = "Request bhej rahe hain…"
+            FirebaseChat.sendFriendRequest(this, profile.code, greeting) { ok ->
+                request.isEnabled = true
+                request.alpha = 1f
+                request.text = "✉️  Message bhejo / request"
+                if (!ok) {
+                    Toast.makeText(this, "Request nahi ja saki — internet/Firebase check karo", Toast.LENGTH_LONG).show()
+                    return@sendFriendRequest
+                }
+                Friends.add(this, profile.name, profile.code)
+                val chatId = WpUser.friendChatId(this, profile.name, profile.code)
+                FirebaseChat.send(this, chatId, ChatMsg(
+                    from = WpUser.me(this), text = greeting,
+                    ts = System.currentTimeMillis(), type = "text"
+                )) { FirebaseChat.prune(this, chatId) }
+                fillInbox()
+                BgMsgService.start(this)
+                dlg.dismiss()
+                Toast.makeText(this, "✅ Request bhej di", Toast.LENGTH_SHORT).show()
+                openFriendChat(profile)
+            }
+        }
+
+        dlg.setContentView(page)
+        dlg.show()
+        dlg.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setGravity(Gravity.CENTER)
+        }
+    }
+
+    private fun friendCodeButton(label: String, primary: Boolean): TextView = TextView(this).apply {
+        text = label
+        textSize = 13f
+        gravity = Gravity.CENTER
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        setTextColor(if (primary) hex("#10081e") else Color.WHITE)
+        background = if (primary) {
+            GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(hex("#54e8ff"), hex("#8b72ff"))).apply { cornerRadius = dp(12).toFloat() }
+        } else roundBox(Color.argb(28, 255, 255, 255), Color.argb(55, 255, 255, 255), 12, 1)
+    }
+
+    private fun openFriendChat(profile: FriendProfile) {
+        startActivity(Intent(this, ChatActivity::class.java)
+            .putExtra("name", profile.name)
+            .putExtra("friendCode", profile.code)
+            .putExtra("chatId", WpUser.friendChatId(this, profile.name, profile.code)))
     }
 
     /** Upar wale ☰ se: pehle poochhna kaunsa dost hatana hai (poorani list). */
@@ -356,25 +656,132 @@ class InboxActivity : Activity() {
         dlg.show()
     }
 
-    /** List ko chats ke hisaab se bharta hai (pinned upar). Label (index 0) rehta hai. */
+    /** Original order: pehle Message Requests, phir accepted Chats. */
     private fun fillInbox() {
-        val keep = 1
-        while (listBox.childCount > keep) listBox.removeViewAt(keep)
-        visibleChats().sortedByDescending { it.pinned }.forEach { listBox.addView(buildRow(it)) }
+        if (!::listBox.isInitialized) return
+        listBox.removeAllViews()
+
+        val q = searchQuery.lowercase()
+        val qCode = WpUser.normalizeFriendCode(searchQuery).lowercase()
+        val requests = incomingRequests.filterNot { Friends.hasCode(this, it.code) }.filter {
+            q.isBlank() || it.name.lowercase().contains(q) ||
+                (qCode.length >= 3 && it.code.lowercase().contains(qCode))
+        }
+        if (requests.isNotEmpty()) {
+            listBox.addView(sectionLabel("MESSAGE REQUESTS"))
+            requests.forEach { listBox.addView(buildRequestRow(it)) }
+        }
+
+        listBox.addView(sectionLabel("CHATS"))
+        val accepted = visibleChats().filter {
+            q.isBlank() || it.name.lowercase().contains(q) ||
+                (qCode.length >= 3 && it.code.lowercase().contains(qCode))
+        }.sortedByDescending { it.pinned }
+        accepted.forEach { listBox.addView(buildRow(it)) }
+        if (accepted.isEmpty()) {
+            listBox.addView(TextView(this).apply {
+                text = "Abhi koi chat nahi — upar 👤+ se Friend Code add karo."
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(hex("#8b84a8"))
+                setPadding(dp(14), dp(18), dp(14), dp(18))
+            }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        listSig = listSignature()
+    }
+
+    private fun sectionLabel(label: String): TextView = TextView(this).apply {
+        text = label
+        textSize = 12f
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        letterSpacing = 0.12f
+        setTextColor(hex("#A78BFA"))
+        layoutParams = lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(4), dp(10), 0, dp(7))
+        }
+    }
+
+    private fun buildRequestRow(req: FriendRequest): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(11), dp(11), dp(10), dp(11))
+            background = roundBox(Color.argb(25, 139, 114, 255), Color.argb(55, 139, 114, 255), 16, 1)
+        }
+        row.addView(TextView(this).apply {
+            text = req.name.firstOrNull()?.uppercase() ?: "?"
+            textSize = 17f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(colorFor(req.name)) }
+        }, lp(dp(44), dp(44)))
+
+        val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        info.addView(TextView(this).apply {
+            text = req.name
+            textSize = 13.5f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            setSingleLine(true)
+        })
+        info.addView(TextView(this).apply {
+            text = req.preview.ifBlank { WpUser.formatFriendCode(req.code) }
+            textSize = 11f
+            setTextColor(hex("#aaa1c2"))
+            maxLines = 2
+        })
+        row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            leftMargin = dp(10); rightMargin = dp(8)
+        })
+
+        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val accept = friendCodeButton("Accept", true)
+        val reject = friendCodeButton("✕", false)
+        buttons.addView(accept, lp(dp(70), dp(38)).apply { rightMargin = dp(5) })
+        buttons.addView(reject, lp(dp(38), dp(38)))
+        row.addView(buttons)
+
+        accept.setOnClickListener { acceptRequest(req) }
+        reject.setOnClickListener {
+            incomingRequests.removeAll { it.code == req.code }
+            FirebaseChat.removeFriendRequest(this, req.code)
+            fillInbox()
+            Toast.makeText(this, "Request hata di", Toast.LENGTH_SHORT).show()
+        }
+        return row.also {
+            it.layoutParams = lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(8)
+            }
+        }
+    }
+
+    private fun acceptRequest(req: FriendRequest) {
+        Friends.add(this, req.name, req.code)
+        incomingRequests.removeAll { it.code == req.code }
+        FirebaseChat.removeFriendRequest(this, req.code)
+        val chatId = WpUser.friendChatId(this, req.name, req.code)
+        val accepted = "✅ ${WpUser.me(this)} ne tumhari request accept kar li — ab baat kar sakte ho!"
+        FirebaseChat.send(this, chatId, ChatMsg(
+            from = WpUser.me(this), text = accepted,
+            ts = System.currentTimeMillis(), type = "text"
+        )) { FirebaseChat.prune(this, chatId) }
+        BgMsgService.start(this)
+        fillInbox()
+        Toast.makeText(this, "✅ ${req.name} add ho gaya", Toast.LENGTH_SHORT).show()
     }
 
     /**
-     * Store (Friends.kt) se naam le kar rows banata hai — jise Remove Friend kiya gaya
-     * wo is list mein dobara kabhi nahi aayega (chahe chat screen se hataya ho).
+     * Store se naam + stable code le kar rows banao. Removed friend dobara appear nahi hota.
      */
     private fun visibleChats(): List<Friend> {
-        val names = Friends.all(this)
-        // Naya asli dost aaye to uski khaali (fake Ok/time ke baghair) metadata row banao.
-        names.forEach { n ->
-            if (chats.none { it.name == n })
-                chats.add(Friend(n, "", "", false, false, colorFor(n)))
+        val entries = Friends.entries(this)
+        entries.forEach { e ->
+            val i = chats.indexOfFirst { it.name.equals(e.name, ignoreCase = true) }
+            if (i < 0) chats.add(Friend(e.name, "", "", false, false, colorFor(e.name), code = e.code))
+            else if (chats[i].code != e.code) chats[i] = chats[i].copy(code = e.code)
         }
-        chats.removeAll { it.name !in names }
+        chats.removeAll { chat -> entries.none { it.name.equals(chat.name, ignoreCase = true) } }
         return chats.toList()
     }
 

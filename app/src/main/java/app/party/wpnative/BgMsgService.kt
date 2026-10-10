@@ -74,9 +74,9 @@ class BgMsgService : Service() {
     private fun attach() {
         if (!FirebaseChat.isReady(this)) return
         val me = WpUser.me(this)
-        val peers = Friends.all(this).filter { it != me }
+        val peers = Friends.entries(this).filter { it.name != me }
         for (p in peers) {
-            val chatId = WpUser.chatId(me, p)
+            val chatId = WpUser.friendChatId(this, p.name, p.code)
             if (regs.containsKey(chatId)) continue
             try {
                 val r = FirebaseChat.listenLast(this, chatId) { m ->
@@ -87,13 +87,13 @@ class BgMsgService : Service() {
                     if (prev == null) return@listenLast
                     if (m.ts <= prev) return@listenLast        // purana / duplicate
                     if (m.from == me) return@listenLast        // apna hi bheja hua
-                    WpNotify.post(this, p, m.text, chatId)
+                    WpNotify.post(this, p.name, m.text, chatId, p.code)
                 }
                 if (r != null) regs[chatId] = r
             } catch (t: Throwable) { }
         }
         // hataye gaye doston ke listener band kar do
-        val valid = peers.map { WpUser.chatId(me, it) }.toSet()
+        val valid = peers.map { WpUser.friendChatId(this, it.name, it.code) }.toSet()
         val it = regs.entries.iterator()
         while (it.hasNext()) {
             val e = it.next()

@@ -68,6 +68,7 @@ class ChatActivity : Activity(), ChatHost {
 
     /** Ek message. rx = emoji -> kya wo meri reaction hai. fid = Firebase wali id. */
     private var peer = "Dost"
+    private var peerCode = ""
     private var peerColor = 0
     private val msgs = mutableListOf<Msg>()
     private var nextId = 1
@@ -137,9 +138,13 @@ class ChatActivity : Activity(), ChatHost {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         peer = intent.getStringExtra("name")?.takeIf { it.isNotBlank() } ?: "Dost"
+        peerCode = WpUser.normalizeFriendCode(
+            intent.getStringExtra("friendCode") ?: Friends.codeForName(this, peer)
+        )
         peerColor = pickColor(peer)
         me = WpUser.me(this)
-        chatId = WpUser.chatId(me, peer)
+        chatId = intent.getStringExtra("chatId")?.takeIf { it.isNotBlank() }
+            ?: WpUser.friendChatId(this, peer, peerCode)
         MediaCleanup.runIfDue(this)     // 3 din purani photo/voice khud mit jayen
         setContentView(buildScreen())
 
