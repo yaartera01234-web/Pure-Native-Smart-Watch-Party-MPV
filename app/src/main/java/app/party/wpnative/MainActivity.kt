@@ -46,48 +46,8 @@ import java.net.URL
  */
 class MainActivity : Activity() {
 
-    private data class ThemeDef(val key: String, val name: String, val bg: IntArray, val j: IntArray)
-    private data class BubbleDef(val name: String, val short: String, val own: IntArray, val oth: IntArray, val ownTxt: Int, val othTxt: Int)
-
-    private val themes: List<ThemeDef> by lazy {
-        listOf(
-            ThemeDef("neon", "Lobby Neon",
-                intArrayOf(hex("#050719"), hex("#16112d"), hex("#0b1829")),
-                intArrayOf(hex("#fa35de"), hex("#c03cff"), hex("#36d9fa"))),
-            ThemeDef("purple", "Night Purple (default)",
-                intArrayOf(hex("#0f0c29"), hex("#302b63"), hex("#24243e")),
-                intArrayOf(hex("#ff66bd"), hex("#a477ff"), hex("#55baff"))),
-            ThemeDef("blue", "Ocean Cyan",
-                intArrayOf(hex("#051219"), hex("#11232d"), hex("#0b2927")),
-                intArrayOf(hex("#358efa"), hex("#3cb7ff"), hex("#36faed"))),
-            ThemeDef("sunset", "Sunset Rose",
-                intArrayOf(hex("#19050c"), hex("#2d111b"), hex("#29180b")),
-                intArrayOf(hex("#fa3549"), hex("#ff3c83"), hex("#fa8e36"))),
-            ThemeDef("emerald", "Emerald Glow",
-                intArrayOf(hex("#05190f"), hex("#112d1f"), hex("#0b2729")),
-                intArrayOf(hex("#35fac5"), hex("#3cff9e"), hex("#36eafa"))),
-            ThemeDef("amoled", "Champagne Gold",
-                intArrayOf(hex("#191305"), hex("#2d2511"), hex("#29270b")),
-                intArrayOf(hex("#e88f47"), hex("#eabc51"), hex("#e8db48")))
-        )
-    }
-
-    private val bubbles: List<BubbleDef> by lazy {
-        listOf(
-            BubbleDef("Lobby Neon · Violet + Midnight", "Violet + Midnight", cols("#cf30bd", "#6b55e4"), cols("#261c40", "#1d2340", "#12253b"), hex("#ffffff"), hex("#efe8fb")),
-            BubbleDef("1 · Pink + Cyan (default)", "Pink + Cyan", cols("#f472b6", "#a78bfa"), cols("#51c9c2", "#7182e9", "#aa7ced"), hex("#ffffff"), hex("#ffffff")),
-            BubbleDef("2 · Orange + Blue", "Orange + Blue", cols("#fb923c", "#ea580c"), cols("#38bdf8", "#3b82f6", "#1d4ed8"), hex("#3a1a04"), hex("#ffffff")),
-            BubbleDef("3 · Green + Magenta", "Green + Magenta", cols("#22c55e", "#15803d"), cols("#f472b6", "#e11d48", "#be123c"), hex("#02240f"), hex("#ffffff")),
-            BubbleDef("4 · Yellow + Violet", "Yellow + Violet", cols("#facc15", "#eab308"), cols("#a78bfa", "#7c3aed", "#5b21b6"), hex("#3a2d02"), hex("#ffffff")),
-            BubbleDef("5 · Red + Teal", "Red + Teal", cols("#ef4444", "#b91c1c"), cols("#2dd4bf", "#14b8a6", "#0f766e"), hex("#ffffff"), hex("#04201d")),
-            BubbleDef("6 · Lime + Purple", "Lime + Purple", cols("#a3e635", "#65a30d"), cols("#c084fc", "#8b5cf6", "#6d28d9"), hex("#1a2e02"), hex("#ffffff")),
-            BubbleDef("7 · Black + White", "Black + White", cols("#0b1220", "#1f2937"), cols("#ffffff", "#e2e8f0", "#cbd5e1"), hex("#ffffff"), hex("#0b1220")),
-            BubbleDef("Ocean Cyan · Matching bubbles", "Ocean Cyan", cols("#3078cf", "#55b0e4"), cols("#1c3340", "#1c3340", "#123b38"), hex("#031724"), hex("#e8f4fb")),
-            BubbleDef("Emerald Glow · Matching bubbles", "Emerald Glow", cols("#30cfa5", "#55e49d"), cols("#1c402e", "#1c402e", "#12383b"), hex("#041b12"), hex("#e8fbf2")),
-            BubbleDef("Sunset Rose · Matching bubbles", "Sunset Rose", cols("#ce3758", "#ae275d"), cols("#401c29", "#401c29", "#3b2412"), hex("#ffffff"), hex("#fbe8ef")),
-            BubbleDef("Champagne Gold · Matching bubbles", "Champagne Gold", cols("#e6b25b", "#d1bc78"), cols("#40351c", "#40351c", "#3b3812"), hex("#291b07"), hex("#fbf5e8"))
-        )
-    }
+    private val themes get() = WpThemes.all
+    private val bubbles get() = WpBubbles.all
 
     private val towers = arrayOf("🗼 EMQX (tez!)", "🗼 HiveMQ", "🗼 tyckr")
     private var towerIndex = 0
@@ -110,6 +70,13 @@ class MainActivity : Activity() {
     private lateinit var titleView: GradientText
     private lateinit var joinBtn: Button
     private lateinit var barTitle: TextView
+    private lateinit var joinCard: LinearLayout
+    private lateinit var badgeView: TextView
+    private lateinit var avatarFrame: FrameLayout
+    private lateinit var avatarRing: View
+    private lateinit var themeBarView: LinearLayout
+    private lateinit var themeBarSubtitle: TextView
+    private val featureChips = mutableListOf<TextView>()
     private val dotViews = mutableListOf<View>()
 
     private val prefs by lazy { getSharedPreferences("wp_native", Context.MODE_PRIVATE) }
@@ -150,6 +117,9 @@ class MainActivity : Activity() {
         towerIndex = prefs.getInt("tower", 0).coerceIn(0, towers.size - 1)
         themeIndex = prefs.getInt("theme", 1).coerceIn(0, themes.size - 1)
         bubbleIndex = prefs.getInt("bubble", 1).coerceIn(0, bubbles.size - 1)
+        val migrated = WpThemes.migrateCoupling(prefs, themeIndex, bubbleIndex)
+        themeIndex = migrated.theme
+        bubbleIndex = migrated.bubble
     }
 
     private fun savePrefs() {
@@ -189,7 +159,7 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this)
         scroll.isFillViewport = true
 
-        val card = LinearLayout(this).apply {
+        joinCard = LinearLayout(this).apply {
             clipChildren = false
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -199,7 +169,7 @@ class MainActivity : Activity() {
 
         // Logo (5 rangeeli bars) + title
         val logo = LogoView(this)
-        card.addView(logo, lp(dp(44), dp(44)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        joinCard.addView(logo, lp(dp(44), dp(44)).apply { gravity = Gravity.CENTER_HORIZONTAL })
         android.animation.ObjectAnimator.ofFloat(logo, "translationY", 0f, -dp(10).toFloat(), 0f).apply {
             duration = 2000
             repeatCount = android.animation.ObjectAnimator.INFINITE
@@ -211,10 +181,10 @@ class MainActivity : Activity() {
             textSize = 32f
             gravity = Gravity.CENTER
         }
-        card.addView(titleView, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5); bottomMargin = dp(5) })
+        joinCard.addView(titleView, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5); bottomMargin = dp(5) })
 
         // Badge (glow ke saath)
-        card.addView(TextView(this).apply {
+        badgeView = TextView(this).apply {
             text = "Feel Special With Me 🥰 💗"
             textSize = 14f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -224,18 +194,19 @@ class MainActivity : Activity() {
                 GlowDrawable(Color.argb(89, 244, 114, 182), dp(9).toFloat(), dp(20).toFloat()),
                 roundBox(Color.argb(46, 244, 114, 182), Color.argb(115, 244, 114, 182), 20, 1)
             ))
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5); bottomMargin = dp(12) })
+        }
+        joinCard.addView(badgeView, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5); bottomMargin = dp(12) })
 
         // Avatar + buttons
-        card.addView(buildAvatarPick(), lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
+        joinCard.addView(buildAvatarPick(), lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
 
         // Name
         nameInput = styledEdit("Apna name likho...", 20, 17f)
-        card.addView(nameInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+        joinCard.addView(nameInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
 
         // Room
         roomInput = styledEdit("Room name... (doston se poocho!)", 20, 16f)
-        card.addView(roomInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
+        joinCard.addView(roomInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
 
         // Restore saved name/room (watchers se pehle)
         val savedName = prefs.getString("name", "") ?: ""
@@ -266,10 +237,10 @@ class MainActivity : Activity() {
             background = roundBox(Color.argb(200, 12, 10, 28), Color.argb(60, 255, 255, 255), 14, 2)
             setOnClickListener { openTowerPicker() }
         }
-        card.addView(towerBtn, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
+        joinCard.addView(towerBtn, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
 
         // Theme bar (tap = theme + bubble picker)
-        card.addView(buildThemeBar(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        joinCard.addView(buildThemeBar(), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
 
         // Join button
         joinBtn = Button(this).apply {
@@ -292,15 +263,15 @@ class MainActivity : Activity() {
                 }
             }
         }
-        card.addView(joinBtn, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(12) })
+        joinCard.addView(joinBtn, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(12) })
 
         // Feature chips
-        card.addView(chipFlow(listOf("▶️ YouTube", "🎞️ MP4/MP3", "📋 Playlist", "🖼️ DP", "↩️ Reply", "🔄 Sync", "🚪 Rooms")),
+        joinCard.addView(chipFlow(listOf("▶️ YouTube", "🎞️ MP4/MP3", "📋 Playlist", "🖼️ DP", "↩️ Reply", "🔄 Sync", "🚪 Rooms")),
             lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
 
         renderAvatar()
 
-        scroll.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        scroll.addView(joinCard, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(dp(16), dp(8), dp(16), dp(24))
         })
         rootView.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -310,30 +281,81 @@ class MainActivity : Activity() {
     private fun towerLabel(): String = towers[towerIndex] + "   ▾"
 
     private fun openTowerPicker() {
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("🗼 Tower chuno")
             .setItems(arrayOf<CharSequence>(*towers)) { _, i ->
                 towerIndex = i
                 towerBtn.text = towerLabel()
                 savePrefs()
             }
-            .show()
+            .create()
+        dialog.show()
+        val t = themes[themeIndex]
+        dialog.window?.setBackgroundDrawable(GradientDrawable(GradientDrawable.Orientation.TL_BR, t.menu).apply {
+            cornerRadius = dp(18).toFloat(); setStroke(dp(1), t.panelStroke)
+        })
     }
 
     /** Theme + bubble ka rang poore page par lagata hai. */
     private fun applyTheme() {
         val t = themes[themeIndex]
         val b = bubbles[bubbleIndex]
-        rootView.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, t.bg)
+        rootView.background = WpPageDrawable(t, resources.displayMetrics.density)
+        joinCard.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, t.joinCard).apply {
+            cornerRadius = dp(24).toFloat()
+            setStroke(dp(1), t.joinStroke)
+        }
         titleView.grad = t.j
         titleView.applyShader()
-        joinBtn.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, t.j)
-            .apply { cornerRadius = dp(14).toFloat() }
+        joinBtn.setTextColor(t.buttonText)
+        joinBtn.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+            if (t.key == "purple") t.j else t.fill2).apply {
+            cornerRadius = dp(14).toFloat()
+        }
+        applyMainInput(nameInput, nameInput.hasFocus())
+        applyMainInput(roomInput, roomInput.hasFocus())
+        towerBtn.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, t.input).apply {
+            cornerRadius = dp(14).toFloat(); setStroke(dp(1), t.inputStroke)
+        }
+        themeBarView.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(t.chip, t.soft)).apply {
+            cornerRadius = dp(14).toFloat(); setStroke(dp(1), t.inputStroke)
+        }
+        themeBarSubtitle.setTextColor(t.accentText)
+        featureChips.forEach { chip ->
+            chip.background = GradientDrawable().apply {
+                setColor(t.chip); cornerRadius = dp(20).toFloat(); setStroke(dp(1), t.itemStroke)
+            }
+        }
+        badgeView.setTextColor(t.accentText)
+        badgeView.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(withAlpha(t.j.first(), 46), withAlpha(t.j.last(), 46))).apply {
+            cornerRadius = dp(20).toFloat(); setStroke(dp(1), withAlpha(t.focus, 150))
+        }
+        avatarFrame.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, b.own).apply {
+            shape = GradientDrawable.OVAL; setStroke(dp(3), withAlpha(t.focus, 115))
+        }
+        avatarRing.background = InsetDrawable(GradientDrawable().apply {
+            shape = GradientDrawable.OVAL; setColor(Color.TRANSPARENT); setStroke(dp(3), t.focus)
+        }, dp(2))
         barTitle.text = t.name.replace(" (default)", "") + " · " + b.short
+        val preview = intArrayOf(t.bg[1], b.own[0], b.other[0])
         for ((i, v) in dotViews.withIndex()) {
-            v.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.j[i]) }
+            v.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(preview[i]) }
         }
     }
+
+    private fun applyMainInput(view: EditText, focused: Boolean) {
+        val t = themes[themeIndex]
+        view.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, t.input).apply {
+            cornerRadius = dp(14).toFloat()
+            setStroke(dp(if (focused) 2 else 1), if (focused) t.focus else t.inputStroke)
+        }
+        view.setHintTextColor(withAlpha(t.accentText, 180))
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        (color and 0x00ffffff) or (alpha.coerceIn(0, 255) shl 24)
 
     private fun buildAvatarPick(): LinearLayout {
         val col = LinearLayout(this).apply {
@@ -341,7 +363,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
         }
         // Avatar circle: gradient + letter/emoji, uske upar photo/cartoon image (circle mein clip)
-        val frame = FrameLayout(this).apply {
+        avatarFrame = FrameLayout(this).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(hex("#f472b6"), hex("#a78bfa"))
@@ -368,10 +390,10 @@ class MainActivity : Activity() {
         }
         avatarImage = imageView
         // Photo/letter ko 3dp andar rakho, taake ring unke BAHAR bilkul edge par aaye (website jaisa)
-        frame.addView(letterView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
-        frame.addView(imageView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+        avatarFrame.addView(letterView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+        avatarFrame.addView(imageView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
         // Website wala 3px ka pink-lavender ring (border), photo ke upar bhi dikhe
-        val ringView = View(this).apply {
+        avatarRing = View(this).apply {
             background = InsetDrawable(
                 GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
@@ -381,8 +403,8 @@ class MainActivity : Activity() {
                 dp(2)
             )
         }
-        frame.addView(ringView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        col.addView(frame, lp(dp(84), dp(84)))
+        avatarFrame.addView(avatarRing, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        col.addView(avatarFrame, lp(dp(84), dp(84)))
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(smallButton("📷 Photo", "#10b981", "#14b8a6") { openPhotoPicker() },
@@ -520,14 +542,14 @@ class MainActivity : Activity() {
     }
 
     private fun buildThemeBar(): LinearLayout {
-        val bar = LinearLayout(this).apply {
+        themeBarView = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(10), dp(12), dp(10))
             background = roundBox(Color.argb(150, 12, 10, 28), Color.argb(56, 255, 255, 255), 14, 1)
             setOnClickListener { openPicker() }
         }
-        bar.addView(TextView(this).apply { text = "🎨"; textSize = 16f; setPadding(0, 0, dp(9), 0) })
+        themeBarView.addView(TextView(this).apply { text = "🎨"; textSize = 16f; setPadding(0, 0, dp(9), 0) })
 
         val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         barTitle = TextView(this).apply {
@@ -536,12 +558,13 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
         }
         texts.addView(barTitle)
-        texts.addView(TextView(this).apply {
+        themeBarSubtitle = TextView(this).apply {
             text = "theme aur bubble badlo"
             textSize = 11f
-            setTextColor(hex("#c4b5fd"))
-        })
-        bar.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            setTextColor(themes[themeIndex].accentText)
+        }
+        texts.addView(themeBarSubtitle)
+        themeBarView.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         // 3 rang ke dots (theme ke rang)
         val dots = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -551,9 +574,9 @@ class MainActivity : Activity() {
             dotViews.add(d)
             dots.addView(d, lp(dp(12), dp(12)).apply { rightMargin = dp(4) })
         }
-        bar.addView(dots)
-        bar.addView(TextView(this).apply { text = "›"; textSize = 18f; setTextColor(Color.WHITE); setPadding(dp(8), 0, 0, 0) })
-        return bar
+        themeBarView.addView(dots)
+        themeBarView.addView(TextView(this).apply { text = "›"; textSize = 18f; setTextColor(Color.WHITE); setPadding(dp(8), 0, 0, 0) })
+        return themeBarView
     }
 
     /** Theme + bubble picker: website wali cards (theme ka swatch + bubble ka chat sample). */
@@ -563,6 +586,7 @@ class MainActivity : Activity() {
             setPadding(dp(12), dp(12), dp(12), dp(6))
         }
         val scroll = ScrollView(this).apply { addView(box) }
+        var activeDialog: AlertDialog? = null
 
         fun header(title: String, sub: String) {
             box.addView(TextView(this@MainActivity).apply {
@@ -574,7 +598,7 @@ class MainActivity : Activity() {
             box.addView(TextView(this@MainActivity).apply {
                 text = sub
                 textSize = 11f
-                setTextColor(hex("#c4b5fd"))
+                setTextColor(themes[themeIndex].accentText)
             }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
         }
 
@@ -583,9 +607,10 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(dp(8), dp(8), dp(8), dp(8))
+                val current = themes[themeIndex]
                 background = roundBox(
-                    Color.argb(if (selected) 50 else 18, 255, 255, 255),
-                    if (selected) Color.argb(220, 255, 255, 255) else Color.argb(34, 255, 255, 255),
+                    if (selected) withAlpha(current.focus, 50) else current.soft,
+                    if (selected) current.focus else current.itemStroke,
                     14, if (selected) 2 else 1
                 )
                 addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
@@ -617,7 +642,7 @@ class MainActivity : Activity() {
             }
         }
 
-        fun themeSwatch(t: ThemeDef): View = View(this@MainActivity).apply {
+        fun themeSwatch(t: WpTheme): View = View(this@MainActivity).apply {
             background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, swatchColors(t))
                 .apply { cornerRadius = dp(10).toFloat() }
         }
@@ -633,11 +658,24 @@ class MainActivity : Activity() {
                 .apply { cornerRadius = dp(12).toFloat() }
         }
 
-        fun bubbleSample(b: BubbleDef): View = LinearLayout(this@MainActivity).apply {
+        fun bubbleSample(b: WpBubbleTheme, style: Int): View = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            addView(chip("unka", b.oth, b.othTxt), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(0, 0, dp(4), 0) })
-            addView(chip("mera", b.own, b.ownTxt), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(4), 0, 0, 0) })
+            val other = chip("unka", b.other, b.otherText).apply {
+                setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                background = WpBubbleDrawable(b.other, false, resources.displayMetrics.density,
+                    b.otherGlow, b.edge ?: Color.argb(66, 255, 255, 255), true,
+                    if (style == 0 || style >= 8) 125f else 135f)
+            }
+            val own = chip("mera", b.own, b.ownText).apply {
+                setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                background = WpBubbleDrawable(b.own, true, resources.displayMetrics.density,
+                    if (style == 1) Color.TRANSPARENT else b.ownGlow,
+                    if (style in 2..7) Color.argb(56, 255, 255, 255) else null,
+                    style != 1, if (style == 0 || style >= 8) 110f else 135f)
+            }
+            addView(other, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(0, 0, dp(4), 0) })
+            addView(own, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(4), 0, 0, 0) })
         }
 
         fun render() {
@@ -645,9 +683,15 @@ class MainActivity : Activity() {
             header("🎨 Theme chuno", "(poora rang badalta hai)")
             val tCards = themes.mapIndexed { i, t ->
                 card(themeSwatch(t), t.name.replace(" (default)", ""), i == themeIndex) {
-                    themeIndex = i
+                    val selected = WpThemes.select(prefs, themeIndex, bubbleIndex, i)
+                    themeIndex = selected.theme
+                    bubbleIndex = selected.bubble
                     applyTheme()
                     savePrefs()
+                    activeDialog?.window?.setBackgroundDrawable(GradientDrawable(
+                        GradientDrawable.Orientation.TL_BR, themes[themeIndex].menu).apply {
+                        cornerRadius = dp(20).toFloat(); setStroke(dp(1), themes[themeIndex].panelStroke)
+                    })
                     render()
                 }
             }
@@ -655,7 +699,7 @@ class MainActivity : Activity() {
 
             header("💬 Bubble style", "(sirf chat ke bubble · farq darje mein)")
             val bCards = bubbles.mapIndexed { i, b ->
-                card(bubbleSample(b), b.short, i == bubbleIndex) {
+                card(bubbleSample(b, i), b.short, i == bubbleIndex) {
                     bubbleIndex = i
                     applyTheme()
                     savePrefs()
@@ -670,13 +714,18 @@ class MainActivity : Activity() {
             .setView(scroll)
             .setPositiveButton("✓ Theek hai, save karo", null)
             .create()
-        dialog.window?.setBackgroundDrawable(roundBox(Color.argb(245, 12, 10, 28), Color.argb(70, 255, 255, 255), 20, 1))
+        activeDialog = dialog
         dialog.show()
+        val t = themes[themeIndex]
+        dialog.window?.setBackgroundDrawable(GradientDrawable(GradientDrawable.Orientation.TL_BR, t.menu).apply {
+            cornerRadius = dp(20).toFloat(); setStroke(dp(1), t.panelStroke)
+        })
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(t.focus)
     }
 
     private fun styledEdit(hint: String, maxLen: Int, size: Float): EditText = EditText(this).apply {
         this.hint = hint
-        setHintTextColor(hex("#c4b5fd"))
+        setHintTextColor(themes[themeIndex].accentText)
         setTextColor(Color.WHITE)
         textSize = size
         gravity = Gravity.CENTER
@@ -685,10 +734,12 @@ class MainActivity : Activity() {
         filters = arrayOf<android.text.InputFilter>(android.text.InputFilter.LengthFilter(maxLen))
         setPadding(dp(18), 0, dp(18), 0)
         background = roundBox(Color.argb(200, 12, 10, 28), Color.argb(60, 255, 255, 255), 14, 2)
+        setOnFocusChangeListener { view, focused -> applyMainInput(view as EditText, focused) }
     }
 
     private fun chipFlow(items: List<String>): FlowLayout {
         val flow = FlowLayout(this)
+        featureChips.clear()
         for (s in items) {
             val chip = TextView(this).apply {
                 text = s
@@ -698,6 +749,7 @@ class MainActivity : Activity() {
                 setPadding(dp(12), dp(6), dp(12), dp(6))
                 background = roundBox(Color.argb(31, 255, 255, 255), Color.argb(38, 255, 255, 255), 20, 1)
             }
+            featureChips.add(chip)
             flow.addView(chip, ViewGroup.MarginLayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(dp(3), dp(3), dp(3), dp(3))
             })
@@ -719,10 +771,9 @@ class MainActivity : Activity() {
     private fun cols(vararg c: String): IntArray = IntArray(c.size) { hex(c[it]) }
 
     /** Website ke theme card ka swatch (Night Purple aur Champagne Gold ke alag rang). */
-    private fun swatchColors(t: ThemeDef): IntArray = when (t.key) {
+    private fun swatchColors(t: WpTheme): IntArray = when (t.key) {
         "purple" -> cols("#3a3170", "#241f4d")
-        "amoled" -> cols("#f0b756", "#e0b95f", "#f2dda0")
-        else -> t.j
+        else -> t.fill2
     }
 
     // ---------- custom views ----------

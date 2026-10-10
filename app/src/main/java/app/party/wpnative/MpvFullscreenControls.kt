@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.graphics.*
+import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -22,6 +24,7 @@ import kotlin.math.roundToInt
 internal class MpvFullscreenControls(
     private val act: Activity,
     private val player: MpvVideoPlayer,
+    private val theme: WpTheme,
     private val send: (String) -> Unit,
     private val exit: () -> Unit,
     private val sourceTitle: () -> String,
@@ -32,7 +35,7 @@ internal class MpvFullscreenControls(
 ) : FrameLayout(act) {
     private val handler=Handler(Looper.getMainLooper())
     private val audio=act.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private val accent=Color.rgb(202,151,250)
+    private val accent=theme.accentText
     private val oldBrightness=act.window.attributes.screenBrightness
     private val oldOrientation=act.requestedOrientation
     private val oldFlags=act.window.decorView.systemUiVisibility
@@ -44,7 +47,7 @@ internal class MpvFullscreenControls(
     private var dialogOpen=false
     private var downX=0f;private var downY=0f;private var startBrightness=.5f;private var startVolume=0
     private var zone=0;private var gesturing=false;private var canGesture=false
-    private val art=AlbumCanvas(act)
+    private val art=AlbumCanvas(act,theme)
     private val tapCatcher=View(act)
     private val top=LinearLayout(act)
     private val bottom=LinearLayout(act)
@@ -73,7 +76,8 @@ internal class MpvFullscreenControls(
         addView(tapCatcher,LayoutParams(-1,-1))
         top.orientation=LinearLayout.HORIZONTAL;top.gravity=Gravity.CENTER_VERTICAL
         top.setPadding(dp(18),dp(8),dp(18),dp(8))
-        top.background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,intArrayOf(0xcc0d0919.toInt(),0x000d0919))
+        top.background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(withAlpha(theme.menu.first(),204),theme.menu.first() and 0x00ffffff))
         addView(top,LayoutParams(-1,dp(70),Gravity.TOP))
         top.addView(button("‹", "Exit fullscreen") { exit() },LinearLayout.LayoutParams(dp(54),dp(48)))
         val heading=LinearLayout(act);heading.orientation=LinearLayout.VERTICAL;heading.setPadding(dp(12),0,dp(8),0)
@@ -82,17 +86,23 @@ internal class MpvFullscreenControls(
         heading.addView(brand);heading.addView(title);top.addView(heading,LinearLayout.LayoutParams(0,-2,1f))
         addView(feed,LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{topMargin=dp(74);leftMargin=dp(18)})
         middle.orientation=LinearLayout.HORIZONTAL;middle.gravity=Gravity.CENTER
-        middle.background=rounded(0x8820152d.toInt(),40f)
+        middle.background=rounded(theme.soft,40f)
         middle.setPadding(dp(8),dp(4),dp(8),dp(4))
         middle.addView(button("↶ 10","Back ten seconds") { send("seekrel:-10");wake() },LinearLayout.LayoutParams(dp(76),dp(64)))
-        styleButton(play,"▶");play.textSize=28f;play.contentDescription="Play or pause";play.setOnClickListener{send("toggle");wake()}
+        styleButton(play,"▶");play.textSize=28f;play.contentDescription="Play or pause"
+        play.setTextColor(theme.buttonText)
+        play.background=GradientDrawable(GradientDrawable.Orientation.TL_BR,theme.fill2).apply{shape=GradientDrawable.OVAL;setStroke(dp(1),Color.argb(82,255,255,255))}
+        play.setOnClickListener{send("toggle");wake()}
         middle.addView(play,LinearLayout.LayoutParams(dp(78),dp(68)))
         middle.addView(button("10 ↷","Forward ten seconds") { send("seekrel:10");wake() },LinearLayout.LayoutParams(dp(76),dp(64)))
         addView(middle,LayoutParams(-2,-2,Gravity.CENTER))
         bottom.orientation=LinearLayout.VERTICAL;bottom.setPadding(dp(26),dp(12),dp(26),dp(12))
-        bottom.background=GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,intArrayOf(0xe6100b1c.toInt(),0x00100b1c))
+        bottom.background=GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+            intArrayOf(withAlpha(theme.menu.last(),230),theme.menu.last() and 0x00ffffff))
         addView(bottom,LayoutParams(-1,dp(110),Gravity.BOTTOM))
-        seek.max=10000;seek.progressTintList=ColorStateList.valueOf(accent);seek.thumbTintList=ColorStateList.valueOf(accent);seek.contentDescription="Playback position"
+        seek.max=10000;seek.progressTintList=ColorStateList.valueOf(theme.dot);seek.thumbTintList=ColorStateList.valueOf(theme.dot);seek.contentDescription="Playback position"
+        seek.progressDrawable=themedProgress()
+        seek.thumb=GradientDrawable().apply{shape=GradientDrawable.OVAL;setColor(theme.dot);setStroke(dp(2),Color.WHITE);setSize(dp(13),dp(13))}
         bottom.addView(seek,LinearLayout.LayoutParams(-1,dp(35)))
         seek.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{
             override fun onStartTrackingTouch(v:SeekBar){dragging=true;handler.removeCallbacks(hideTask)}
@@ -105,7 +115,7 @@ internal class MpvFullscreenControls(
         styleButton(tracks,"Audio");tracks.setOnClickListener{chooseAudio()};row.addView(tracks,LinearLayout.LayoutParams(dp(110),dp(42)))
         styleButton(q,"144p");q.setOnClickListener{chooseQuality()};row.addView(q,LinearLayout.LayoutParams(dp(85),dp(42)))
         bottom.addView(row)
-        hud.textSize=18f;hud.setTextColor(Color.WHITE);hud.gravity=Gravity.CENTER;hud.setPadding(dp(24),dp(15),dp(24),dp(15));hud.background=rounded(0xdd241a34.toInt(),18f);hud.visibility=GONE
+        hud.textSize=18f;hud.setTextColor(Color.WHITE);hud.gravity=Gravity.CENTER;hud.setPadding(dp(24),dp(15),dp(24),dp(15));hud.background=rounded(theme.menu.first(),18f);hud.visibility=GONE
         addView(hud,LayoutParams(-2,-2,Gravity.CENTER))
         act.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_FULLSCREEN)
         if(Build.VERSION.SDK_INT>=30)oldBehavior=act.window.insetsController?.systemBarsBehavior?:0
@@ -122,8 +132,21 @@ internal class MpvFullscreenControls(
         }
         immerse();tick();wake()
     }
-    private fun rounded(color:Int,radius:Float)=GradientDrawable().apply{setColor(color);cornerRadius=dp(radius.toInt()).toFloat()}
-    private fun styleButton(b:Button,label:String){b.text=label;b.isAllCaps=false;b.textSize=13f;b.setTextColor(Color.WHITE);b.background=rounded(0x332d2140,14f);b.setPadding(dp(6),0,dp(6),0)}
+    private fun rounded(color:Int,radius:Float)=GradientDrawable().apply{
+        setColor(color);cornerRadius=dp(radius.toInt()).toFloat();setStroke(dp(1),theme.itemStroke)
+    }
+    private fun themedProgress():LayerDrawable{
+        val rail=GradientDrawable().apply{setColor(Color.argb(64,255,255,255));cornerRadius=dp(5).toFloat()}
+        val fill=ClipDrawable(GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,theme.fill).apply{
+            cornerRadius=dp(5).toFloat()
+        },Gravity.START,ClipDrawable.HORIZONTAL)
+        return LayerDrawable(arrayOf(rail,fill)).apply{
+            setId(0,android.R.id.background);setId(1,android.R.id.progress)
+            setLayerInset(0,0,dp(15),0,dp(15));setLayerInset(1,0,dp(15),0,dp(15))
+        }
+    }
+    private fun withAlpha(color:Int,alpha:Int)=(color and 0x00ffffff) or (alpha.coerceIn(0,255) shl 24)
+    private fun styleButton(b:Button,label:String){b.text=label;b.isAllCaps=false;b.textSize=13f;b.setTextColor(Color.WHITE);b.background=rounded(theme.chip,14f);b.setPadding(dp(6),0,dp(6),0)}
     private fun button(label:String,description:String,action:()->Unit)=Button(act).apply{styleButton(this,label);contentDescription=description;setOnClickListener{action()}}
     private fun dp(v:Int)=(v*resources.displayMetrics.density).roundToInt()
     private fun clock(t:Double):String{val n=t.coerceAtLeast(0.0).toInt();return if(n>=3600)"${n/3600}:${(n/60%60).toString().padStart(2,'0')}:${(n%60).toString().padStart(2,'0')}" else "${n/60}:${(n%60).toString().padStart(2,'0')}"}
@@ -161,7 +184,7 @@ internal class MpvFullscreenControls(
             .setSingleChoiceItems(labels,available.indexOfFirst{it.selected}){d,index->
                 player.selectAudio(available[index].id){ok->Toast.makeText(act,if(ok)"Audio: ${available[index].label}" else "Audio switch confirm nahi hua",Toast.LENGTH_SHORT).show();tick()};d.dismiss()
             }.setNegativeButton("Close",null).create()
-        dialog.setOnDismissListener{dialogOpen=false;immerse();wake()};dialog.show()
+        dialog.setOnDismissListener{dialogOpen=false;immerse();wake()};dialog.show();styleDialog(dialog)
     }
     private fun chooseAspect(){
         dialogOpen=true;wake()
@@ -171,14 +194,21 @@ internal class MpvFullscreenControls(
                 Toast.makeText(act,if(ok)player.aspectLabels[i] else "Aspect change failed",Toast.LENGTH_SHORT).show()
                 d.dismiss()
             }.setNegativeButton("Close",null).create()
-        dialog.setOnDismissListener{dialogOpen=false;immerse();wake()};dialog.show()
+        dialog.setOnDismissListener{dialogOpen=false;immerse();wake()};dialog.show();styleDialog(dialog)
     }
     private fun chooseQuality(){
         val qs=qualities();if(qs.isEmpty())return
         dialogOpen=true;wake()
         val dialog=AlertDialog.Builder(act).setTitle("Video quality · manual")
             .setSingleChoiceItems(qs.map{"${it}p"}.toTypedArray(),qs.indexOf(quality())){d,i->send("quality:${qs[i]}");d.dismiss()}.setNegativeButton("Close",null).create()
-        dialog.setOnDismissListener{dialogOpen=false;immerse();wake()};dialog.show()
+        dialog.setOnDismissListener{dialogOpen=false;immerse();wake()};dialog.show();styleDialog(dialog)
+    }
+    private fun styleDialog(dialog:AlertDialog){
+        dialog.window?.setBackgroundDrawable(GradientDrawable(GradientDrawable.Orientation.TL_BR,theme.menu).apply{
+            cornerRadius=dp(18).toFloat();setStroke(dp(1),theme.panelStroke)
+        })
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(theme.accentText)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(theme.focus)
     }
     /** v54: page (YaarNative.wpActivity) se aaya toast JSON -> column. Decorative only; playback/controls par koi asar nahi. */
     fun activity(json:String?):Boolean=feed.show(json)
@@ -225,15 +255,15 @@ internal class MpvFullscreenControls(
         if(Build.VERSION.SDK_INT>=30)act.window.insetsController?.apply{systemBarsBehavior=oldBehavior;show(WindowInsets.Type.systemBars())}
         act.window.decorView.systemUiVisibility=oldFlags
     }
-    private class AlbumCanvas(c:Context):View(c){
+    private class AlbumCanvas(c:Context,private val theme:WpTheme):View(c){
         private val p=Paint(Paint.ANTI_ALIAS_FLAG)
         override fun onDraw(canvas:Canvas){
-            val w=width.toFloat();val h=height.toFloat();p.shader=LinearGradient(0f,0f,w,h,intArrayOf(0xff412151.toInt(),0xff151124.toInt(),0xff192947.toInt()),null,Shader.TileMode.CLAMP);canvas.drawRect(0f,0f,w,h,p);p.shader=null
-            val r=minOf(w,h)*.26f;val x=w/2;val y=h/2;p.color=0xff120e1c.toInt();canvas.drawCircle(x,y,r,p)
-            p.style=Paint.Style.STROKE;p.strokeWidth=1.5f;p.color=0xff45324e.toInt();for(i in 1..20)canvas.drawCircle(x,y,r*i/20,p);p.style=Paint.Style.FILL
-            p.shader=LinearGradient(x-r,y-r,x+r,y+r,0xffb788ef.toInt(),0xffffb9ad.toInt(),Shader.TileMode.CLAMP);canvas.drawCircle(x,y,r*.42f,p);p.shader=null
-            p.color=0xff291a3f.toInt();p.textSize=r*.52f;p.textAlign=Paint.Align.CENTER;canvas.drawText("♫",x,y+r*.18f,p)
-            p.textSize=12*resources.displayMetrics.scaledDensity;p.color=0xffdbcbef.toInt();canvas.drawText("YOUR MUSIC. YOUR MOMENT.",x,y+r+32*resources.displayMetrics.density,p)
+            val w=width.toFloat();val h=height.toFloat();p.shader=LinearGradient(0f,0f,w,h,theme.music,null,Shader.TileMode.CLAMP);canvas.drawRect(0f,0f,w,h,p);p.shader=null
+            val r=minOf(w,h)*.26f;val x=w/2;val y=h/2;p.color=theme.page.first();canvas.drawCircle(x,y,r,p)
+            p.style=Paint.Style.STROKE;p.strokeWidth=1.5f;p.color=theme.inputStroke;for(i in 1..20)canvas.drawCircle(x,y,r*i/20,p);p.style=Paint.Style.FILL
+            p.shader=LinearGradient(x-r,y-r,x+r,y+r,theme.art,null,Shader.TileMode.CLAMP);canvas.drawCircle(x,y,r*.42f,p);p.shader=null
+            p.color=theme.buttonText;p.textSize=r*.52f;p.textAlign=Paint.Align.CENTER;canvas.drawText("♫",x,y+r*.18f,p)
+            p.textSize=12*resources.displayMetrics.scaledDensity;p.color=theme.accentText;canvas.drawText("YOUR MUSIC. YOUR MOMENT.",x,y+r+32*resources.displayMetrics.density,p)
         }
     }
 }

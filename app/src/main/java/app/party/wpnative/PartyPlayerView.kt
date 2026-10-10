@@ -10,7 +10,9 @@ import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.os.Handler
 import android.os.Looper
 import android.text.TextUtils
@@ -67,7 +69,13 @@ internal class PartyPlayerView(context: Context) : FrameLayout(context) {
     private val miniSub = TextView(context)
     private val miniPlay = TextView(context)
     private val miniExpand = TextView(context)
+    private val idleIcon = TextView(context)
+    private val idleHint = TextView(context)
+    private val idleSub = TextView(context)
+    private val skipControls = mutableListOf<TextView>()
+    private val smallControls = mutableListOf<TextView>()
 
+    private var theme: WpTheme = WpThemes.all[1]
     private var actions: PartyPlayerActions? = null
     private var mini = false
     private var fullScreenHost = false
@@ -117,24 +125,27 @@ internal class PartyPlayerView(context: Context) : FrameLayout(context) {
         idle.orientation = LinearLayout.VERTICAL
         idle.gravity = Gravity.CENTER
         idle.setPadding(dp(24), dp(16), dp(24), dp(16))
-        idle.addView(TextView(context).apply {
+        idleIcon.apply {
             text = "▰"
             textSize = 34f
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(165, 180, 252))
-        })
-        idle.addView(TextView(context).apply {
+        }
+        idle.addView(idleIcon)
+        idleHint.apply {
             text = "YouTube / MP4 / MP3 link upar paste karo"
             textSize = 12.5f
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(196, 181, 253))
-        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
-        idle.addView(TextView(context).apply {
+        }
+        idle.addView(idleHint, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
+        idleSub.apply {
             text = "Native MPV · Party ke saath sync"
             textSize = 10.5f
             gravity = Gravity.CENTER
             setTextColor(Color.argb(180, 165, 180, 252))
-        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
+        }
+        idle.addView(idleSub, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
         addView(idle, LayoutParams(-1, -1))
 
         loading.textSize = 12f
@@ -162,6 +173,7 @@ internal class PartyPlayerView(context: Context) : FrameLayout(context) {
         title.ellipsize = TextUtils.TruncateAt.END
         top.addView(title, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(9); rightMargin = dp(5) })
         styleSmall(collapse, "▾")
+        smallControls += collapse
         collapse.contentDescription = "Player mini karo"
         collapse.setOnClickListener {
             setMini(true); actions?.onMiniChanged(true)
@@ -172,11 +184,15 @@ internal class PartyPlayerView(context: Context) : FrameLayout(context) {
 
         center.orientation = LinearLayout.HORIZONTAL
         center.gravity = Gravity.CENTER
-        center.addView(roundControl("↶\n10", 48) { actions?.onSeekBy(-10.0); wakeControls() }, LinearLayout.LayoutParams(dp(56), dp(56)))
+        val back = roundControl("↶\n10", 48) { actions?.onSeekBy(-10.0); wakeControls() }
+        skipControls += back
+        center.addView(back, LinearLayout.LayoutParams(dp(56), dp(56)))
         stylePlay(play)
         play.setOnClickListener { actions?.onTogglePlayback(); wakeControls() }
         center.addView(play, LinearLayout.LayoutParams(dp(59), dp(59)).apply { leftMargin = dp(13); rightMargin = dp(13) })
-        center.addView(roundControl("10\n↷", 48) { actions?.onSeekBy(10.0); wakeControls() }, LinearLayout.LayoutParams(dp(56), dp(56)))
+        val forward = roundControl("10\n↷", 48) { actions?.onSeekBy(10.0); wakeControls() }
+        skipControls += forward
+        center.addView(forward, LinearLayout.LayoutParams(dp(56), dp(56)))
         center.visibility = GONE
         addView(center, LayoutParams(-2, -2, Gravity.CENTER))
 
@@ -205,15 +221,19 @@ internal class PartyPlayerView(context: Context) : FrameLayout(context) {
         time.setTextColor(Color.rgb(226, 220, 239))
         controls.addView(time, LinearLayout.LayoutParams(0, -2, 1f))
         styleSmall(audio, "Audio")
+        smallControls += audio
         audio.setOnClickListener { actions?.onAudioTracks(); wakeControls() }
         controls.addView(audio, LinearLayout.LayoutParams(dp(57), dp(31)).apply { rightMargin = dp(5) })
         styleSmall(quality, "144p")
+        smallControls += quality
         quality.setOnClickListener { actions?.onQuality(); wakeControls() }
         controls.addView(quality, LinearLayout.LayoutParams(dp(52), dp(31)).apply { rightMargin = dp(5) })
         styleSmall(mute, "♪")
+        smallControls += mute
         mute.setOnClickListener { actions?.onToggleMute(); wakeControls() }
         controls.addView(mute, LinearLayout.LayoutParams(dp(35), dp(31)).apply { rightMargin = dp(5) })
         styleSmall(fullscreen, "⛶")
+        smallControls += fullscreen
         fullscreen.contentDescription = "Fullscreen"
         fullscreen.setOnClickListener { actions?.onFullscreen(); wakeControls() }
         controls.addView(fullscreen, LinearLayout.LayoutParams(dp(37), dp(31)))
@@ -241,14 +261,70 @@ internal class PartyPlayerView(context: Context) : FrameLayout(context) {
         miniPlay.setOnClickListener { actions?.onTogglePlayback() }
         miniLayer.addView(miniPlay, LinearLayout.LayoutParams(dp(34), dp(34)).apply { rightMargin = dp(5) })
         styleSmall(miniExpand, "⛶")
+        smallControls += miniExpand
         miniExpand.setOnClickListener { setMini(false); actions?.onMiniChanged(false) }
         miniLayer.addView(miniExpand, LinearLayout.LayoutParams(dp(34), dp(34)))
         miniLayer.visibility = GONE
         miniLayer.setOnClickListener { setMini(false); actions?.onMiniChanged(false) }
         addView(miniLayer, LayoutParams(-1, -1))
+        setTheme(theme)
     }
 
     fun bind(value: PartyPlayerActions) { actions = value }
+
+    /** Apply every Original player token without rebuilding the approved player layout. */
+    fun setTheme(value: WpTheme) {
+        theme = value
+        background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            intArrayOf(Color.BLACK, value.page.first(), Color.BLACK)).apply {
+            cornerRadius = dp(19).toFloat(); setStroke(dp(1), value.panelStroke)
+        }
+        loading.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, value.menu).apply {
+            cornerRadius = dp(13).toFloat(); setStroke(dp(1), value.itemStroke)
+        }
+        badge.setTextColor(value.accentText)
+        idleIcon.setTextColor(value.accentText)
+        idleHint.setTextColor(value.accentText)
+        idleSub.setTextColor(withAlpha(value.accentText, 180))
+        miniSub.setTextColor(value.accentText)
+        play.setTextColor(value.buttonText)
+        play.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, value.fill2).apply {
+            shape = GradientDrawable.OVAL; setStroke(dp(1), withAlpha(Color.WHITE, 82))
+        }
+        miniPlay.setTextColor(value.buttonText)
+        miniPlay.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, value.fill2).apply {
+            cornerRadius = dp(10).toFloat(); setStroke(dp(1), value.inputStroke)
+        }
+        skipControls.forEach { control ->
+            control.background = rounded(value.soft, 24, value.itemStroke)
+        }
+        smallControls.forEach { control ->
+            control.background = rounded(value.chip, 10, value.inputStroke)
+        }
+        seek.progressDrawable = themedProgress(value)
+        seek.thumb = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL; setColor(value.dot); setStroke(dp(2), Color.WHITE)
+            setSize(dp(11), dp(11))
+        }
+        audioArt.setTheme(value)
+        invalidate()
+    }
+
+    private fun themedProgress(value: WpTheme): LayerDrawable {
+        val rail = GradientDrawable().apply {
+            setColor(Color.argb(64, 255, 255, 255)); cornerRadius = dp(5).toFloat()
+        }
+        val fill = ClipDrawable(GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+            value.fill).apply { cornerRadius = dp(5).toFloat() }, Gravity.START, ClipDrawable.HORIZONTAL)
+        return LayerDrawable(arrayOf(rail, fill)).apply {
+            setId(0, android.R.id.background); setId(1, android.R.id.progress)
+            setLayerInset(0, 0, dp(12), 0, dp(12))
+            setLayerInset(1, 0, dp(12), 0, dp(12))
+        }
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        (color and 0x00ffffff) or (alpha.coerceIn(0, 255) shl 24)
 
     fun setMini(value: Boolean) {
         if (fullScreenHost) return
@@ -439,10 +515,10 @@ internal class PartyPlayerView(context: Context) : FrameLayout(context) {
         v.setPadding(dp(4), 0, dp(4), 0)
     }
 
-    private fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
-        setColor(color); cornerRadius = dp(radius).toFloat()
-        setStroke(dp(1), Color.argb(35, 255, 255, 255))
-    }
+    private fun rounded(color: Int, radius: Int, stroke: Int = Color.argb(35, 255, 255, 255)) =
+        GradientDrawable().apply {
+            setColor(color); cornerRadius = dp(radius).toFloat(); setStroke(dp(1), stroke)
+        }
 
     private fun clock(value: Double): String {
         val seconds = value.takeIf { it.isFinite() && it >= 0 }?.toInt() ?: 0
@@ -467,6 +543,8 @@ private class VideoShade(context: Context) : View(context) {
 /** Premium MP3 canvas: neon sleeve, vinyl rings, glow and animated equalizer bars. */
 private class RaveAudioCanvas(context: Context) : View(context) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var theme: WpTheme = WpThemes.all[1]
+    fun setTheme(value: WpTheme) { theme = value; invalidate() }
     private val phaseAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
         duration = 900L; repeatCount = ValueAnimator.INFINITE; repeatMode = ValueAnimator.REVERSE
         interpolator = LinearInterpolator(); addUpdateListener { phase = it.animatedValue as Float; invalidate() }
@@ -482,38 +560,38 @@ private class RaveAudioCanvas(context: Context) : View(context) {
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
         p.shader = LinearGradient(0f, 0f, w, h,
-            intArrayOf(0xff15112e.toInt(), 0xff251743.toInt(), 0xff0b1228.toInt()), null, Shader.TileMode.CLAMP)
+            theme.music, null, Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, w, h, p)
-        p.shader = RadialGradient(w * .83f, 0f, w * .42f, 0x77ff5ebc, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        p.shader = RadialGradient(w * .83f, 0f, w * .42f, theme.musicGlowA, Color.TRANSPARENT, Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, w, h, p)
-        p.shader = RadialGradient(0f, h, w * .45f, 0x5554e8ff, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        p.shader = RadialGradient(0f, h, w * .45f, theme.musicGlowB, Color.TRANSPARENT, Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, w, h, p); p.shader = null
 
         val art = min(h * .67f, w * .31f).coerceAtLeast(48f)
         val left = w * .055f; val top = (h - art) / 2f
         p.shader = LinearGradient(left, top, left + art, top + art,
-            intArrayOf(0xffff66bd.toInt(), 0xff8b5cf6.toInt(), 0xff26318d.toInt()), null, Shader.TileMode.CLAMP)
+            theme.art, null, Shader.TileMode.CLAMP)
         c.drawRoundRect(RectF(left, top, left + art, top + art), art * .14f, art * .14f, p); p.shader = null
         val cx = left + art / 2f; val cy = top + art / 2f
         p.style = Paint.Style.STROKE; p.strokeWidth = 1.2f; p.color = 0x88ffffff.toInt()
         for (i in 1..4) c.drawCircle(cx, cy, art * (.15f + i * .07f), p)
-        p.style = Paint.Style.FILL; p.color = 0xffffd8f0.toInt(); c.drawCircle(cx, cy, art * .14f, p)
-        p.textAlign = Paint.Align.CENTER; p.textSize = art * .17f; p.color = 0xff29133d.toInt();
+        p.style = Paint.Style.FILL; p.color = theme.accentText; c.drawCircle(cx, cy, art * .14f, p)
+        p.textAlign = Paint.Align.CENTER; p.textSize = art * .17f; p.color = theme.buttonText;
         c.drawText("♫", cx, cy + art * .06f, p)
 
         val tx = left + art + w * .05f
         p.textAlign = Paint.Align.LEFT; p.typeface = android.graphics.Typeface.DEFAULT_BOLD
-        p.color = 0xffa9f5ff.toInt(); p.textSize = h * .055f
+        p.color = theme.accentText; p.textSize = h * .055f
         c.drawText("✦  MP3 AUDIO", tx, h * .29f, p)
         p.color = Color.WHITE; p.textSize = h * .105f
         c.drawText(trackTitle.take(28), tx, h * .48f, p)
         p.typeface = android.graphics.Typeface.DEFAULT
-        p.color = 0xffb4afd1.toInt(); p.textSize = h * .055f
+        p.color = (theme.accentText and 0x00ffffff) or (190 shl 24); p.textSize = h * .055f
         c.drawText("Watch Party · Now Playing", tx, h * .58f, p)
 
         val base = h * .77f; val barW = maxOf(2f, w * .006f); val gap = barW * 1.75f
         p.shader = LinearGradient(0f, base - h * .15f, 0f, base,
-            0xff54e8ff.toInt(), 0xffff5ebc.toInt(), Shader.TileMode.CLAMP)
+            theme.bar, null, Shader.TileMode.CLAMP)
         repeat(18) { i ->
             val wave = .28f + .72f * kotlin.math.abs(kotlin.math.sin((phase * Math.PI + i * .73))).toFloat()
             val bh = h * (.035f + .10f * if (playing) wave else .42f)

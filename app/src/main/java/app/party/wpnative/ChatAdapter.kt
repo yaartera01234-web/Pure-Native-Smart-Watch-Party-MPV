@@ -3,6 +3,7 @@ package app.party.wpnative
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.MotionEvent
@@ -27,11 +28,11 @@ interface ChatHost {
     fun hex(s: String): Int
     fun roundBox(fill: Int, stroke: Int, radiusDp: Int, strokeDp: Int): GradientDrawable
     /** DM defaults; Party Room apni selected website bubble palette override karti hai. */
-    fun mineBubbleBg(): GradientDrawable = GradientDrawable(
+    fun mineBubbleBg(): Drawable = GradientDrawable(
         GradientDrawable.Orientation.TL_BR,
         intArrayOf(hex("#5b21b6"), hex("#9333ea"), hex("#db2777"))
     ).apply { cornerRadius = dp(22).toFloat() }
-    fun peerBubbleBg(): GradientDrawable =
+    fun peerBubbleBg(): Drawable =
         roundBox(Color.argb(23, 255, 255, 255), Color.argb(36, 255, 255, 255), 22, 1)
     fun mineBubbleText(): Int = Color.WHITE
     fun peerBubbleText(): Int = hex("#f3efff")
@@ -198,7 +199,8 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 if (partyStyle) setPadding(dp(12), dp(8), dp(12), dp(6))
                 else setPadding(dp(14), dp(10), dp(14), dp(10))
                 background = if (mine) host.mineBubbleBg() else host.peerBubbleBg()
-                if (mine) elevation = dp(6).toFloat()
+                if (partyStyle) setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                else if (mine) elevation = dp(6).toFloat()
             }
             quote = LinearLayout(host.ctx()).apply {
                 orientation = LinearLayout.HORIZONTAL

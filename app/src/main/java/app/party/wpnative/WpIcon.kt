@@ -14,10 +14,10 @@ import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 
 /** Composer ke icons — website ke SVG se utare gaye: "photo" aur "mic". */
-class WpIcon(ctx: Context, private val kind: String) : View(ctx) {
+class WpIcon(ctx: Context, private val kind: String, private val iconColor: Int = Color.WHITE) : View(ctx) {
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = iconColor
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
