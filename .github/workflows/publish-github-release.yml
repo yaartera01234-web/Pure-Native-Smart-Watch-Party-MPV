@@ -1,0 +1,61 @@
+name: "Publish verified GitHub Release"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing signed release tag"
+        required: true
+        default: "v1.0.0"
+      title:
+        description: "Release title"
+        required: true
+        default: "Smart Party Plus v1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Verify release payload
+        run: |
+          set -euo pipefail
+          test -s WatchParty-FirstPage.apk
+          test -s WatchParty-Native-FirstPage.zip
+          test -s SHA256SUMS.txt
+          test -s RELEASE-NOTES-v1.0.0.md
+          sha256sum -c SHA256SUMS.txt
+          git merge-base --is-ancestor "${TAG}^{commit}" HEAD
+        env:
+          TAG: ${{ inputs.tag }}
+
+      - name: Publish release and assets
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+              WatchParty-FirstPage.apk \
+              SHA256SUMS.txt \
+              WatchParty-Native-FirstPage.zip \
+              RELEASE-NOTES-v1.0.0.md
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "$TITLE" \
+              --notes-file RELEASE-NOTES-v1.0.0.md \
+              WatchParty-FirstPage.apk \
+              SHA256SUMS.txt \
+              WatchParty-Native-FirstPage.zip \
+              RELEASE-NOTES-v1.0.0.md
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          TITLE: ${{ inputs.title }}
