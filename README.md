@@ -19,7 +19,7 @@ Ab shamil hai:
 
 Room chat maximum 120 messages rakhti hai. Disconnect/glitch ko Leave nahi maana jata. Native MPV player Room playback ko MQTT/WP4 sync ke sath chalata hai.
 
-Friend Code directory aur Message Requests ke liye repository ka `firestore.rules` Firebase Console mein publish hona chahiye. Existing DM messages, presence aur typing bhi isi Firestore project par rehte hain; Firebase Storage istemal nahi hoti.
+Friend Code directory aur Message Requests existing Firestore DM `chats/.../msgs` permission ke andar compatible envelopes use karte hain, is liye nayi collection permission ki zarurat nahi. Updated `firestore.rules` presence/token shape bhi cover karti hai. Firebase Storage istemal nahi hoti.
 
 ## MPV023 engine
 

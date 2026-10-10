@@ -35,8 +35,11 @@ data class FriendRequest(
  *   chats/{chatId}/msgs/{msgId}                    -> ChatMsg fields
  *   users/{naam}                                   -> presence/token
  *   typing/{chatId}                                -> { who, ts }
- *   friendCodes/{rawCode}                          -> public profile lookup
- *   friendRequests/{targetCode}/items/{senderCode} -> pending first contact
+ *   chats/_wp_friend_codes_v1/msgs/{rawCode}       -> public profile lookup
+ *   chats/_wp_friend_requests_{target}/msgs/{from} -> pending first contact
+ *
+ * Friend metadata valid ChatMsg envelope mein rakha hai taa-ke already-deployed DM rules
+ * ke saath bhi APK turant chale; kisi nayi Firebase collection permission ka intezar nahi.
  */
 object FirebaseChat {
 
@@ -46,6 +49,8 @@ object FirebaseChat {
      * Firestore se bhi). Boss ka hukm: 120.
      */
     const val MSG_KEEP = 120
+    private const val FRIEND_CODE_CHAT = "_wp_friend_codes_v1"
+    private fun friendRequestChat(targetCode: String) = "_wp_friend_requests_$targetCode"
 
     /** Ek baar check kar ke yaad rakh lete hain (baar baar try/catch na chale). */
     private var readyState: Boolean? = null
@@ -349,15 +354,18 @@ object FirebaseChat {
         val name = WpUser.me(ctx).trim().take(40)
         if (code.length != 8 || name.isBlank()) return
         try {
-            db(ctx).collection("friendCodes").document(code).set(
-                mapOf(
-                    "code" to code,
-                    "name" to name,
-                    "color" to "#8b72ff",
-                    "updatedAt" to System.currentTimeMillis()
-                ),
-                SetOptions.merge()
-            )
+            val now = System.currentTimeMillis()
+            db(ctx).collection("chats").document(FRIEND_CODE_CHAT)
+                .collection("msgs").document(code).set(
+                    mapOf(
+                        // Existing isValidMsg envelope:
+                        "from" to name, "text" to "#8b72ff", "ts" to now,
+                        // Friend directory fields:
+                        "code" to code, "name" to name, "color" to "#8b72ff",
+                        "updatedAt" to now
+                    ),
+                    SetOptions.merge()
+                )
         } catch (_: Throwable) { }
     }
 
@@ -366,9 +374,11 @@ object FirebaseChat {
         val raw = WpUser.normalizeFriendCode(code)
         if (!isReady(ctx) || raw.length != 8) { cb(null); return }
         try {
-            db(ctx).collection("friendCodes").document(raw).get()
+            db(ctx).collection("chats").document(FRIEND_CODE_CHAT)
+                .collection("msgs").document(raw).get()
                 .addOnSuccessListener { snap ->
-                    val name = snap.getString("name")?.trim().orEmpty().take(40)
+                    val name = (snap.getString("name") ?: snap.getString("from"))
+                        ?.trim().orEmpty().take(40)
                     if (!snap.exists() || name.isBlank()) cb(null)
                     else cb(FriendProfile(raw, name, snap.getString("color") ?: "#8b72ff"))
                 }
@@ -389,15 +399,17 @@ object FirebaseChat {
             cb(false); return
         }
         try {
-            db(ctx).collection("friendRequests").document(target)
-                .collection("items").document(mine)
+            val name = WpUser.me(ctx).take(40)
+            val shortPreview = preview.take(160)
+            db(ctx).collection("chats").document(friendRequestChat(target))
+                .collection("msgs").document(mine)
                 .set(
                     mapOf(
-                        "code" to mine,
-                        "name" to WpUser.me(ctx).take(40),
-                        "color" to "#8b72ff",
-                        "preview" to preview.take(160),
-                        "ts" to System.currentTimeMillis()
+                        // Existing isValidMsg envelope:
+                        "from" to name, "text" to shortPreview, "ts" to System.currentTimeMillis(),
+                        // Request UI fields:
+                        "code" to mine, "name" to name, "color" to "#8b72ff",
+                        "preview" to shortPreview
                     ),
                     SetOptions.merge()
                 )
@@ -414,18 +426,19 @@ object FirebaseChat {
         if (!isReady(ctx)) { onRequests(emptyList()); return null }
         val mine = WpUser.friendCodeRaw(ctx)
         return try {
-            db(ctx).collection("friendRequests").document(mine).collection("items")
+            db(ctx).collection("chats").document(friendRequestChat(mine)).collection("msgs")
                 .addSnapshotListener { snap, err ->
                     if (err != null || snap == null) { onRequests(emptyList()); return@addSnapshotListener }
                     val list = snap.documents.mapNotNull { d ->
                         val code = WpUser.normalizeFriendCode(d.getString("code") ?: d.id)
-                        val name = d.getString("name")?.trim().orEmpty().take(40)
+                        val name = (d.getString("name") ?: d.getString("from"))
+                            ?.trim().orEmpty().take(40)
                         if (code.length != 8 || name.isBlank() || code == mine) null
                         else FriendRequest(
                             code = code,
                             name = name,
                             color = d.getString("color") ?: "#8b72ff",
-                            preview = d.getString("preview") ?: "👋 Friend request",
+                            preview = d.getString("preview") ?: d.getString("text") ?: "👋 Friend request",
                             ts = d.getLong("ts") ?: 0L
                         )
                     }.sortedByDescending { it.ts }
@@ -442,8 +455,8 @@ object FirebaseChat {
         val sender = WpUser.normalizeFriendCode(senderCode)
         if (!isReady(ctx) || sender.length != 8) { cb?.invoke(false); return }
         try {
-            db(ctx).collection("friendRequests").document(mine)
-                .collection("items").document(sender).delete()
+            db(ctx).collection("chats").document(friendRequestChat(mine))
+                .collection("msgs").document(sender).delete()
                 .addOnSuccessListener { cb?.invoke(true) }
                 .addOnFailureListener { cb?.invoke(false) }
         } catch (_: Throwable) { cb?.invoke(false) }
