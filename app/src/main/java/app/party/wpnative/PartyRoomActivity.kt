@@ -2626,6 +2626,9 @@ private class PartyRoomBackdrop(
 
     private fun radial(c: Canvas, x: Float, y: Float, radius: Float, color: Int, w: Float, h: Float) {
         if (Color.alpha(color) == 0 || radius <= 0f) return
+        // Dot texture is drawn last at alpha 13; never let that Paint state dim the next frame.
+        p.color = Color.WHITE
+        p.alpha = 255
         p.shader = RadialGradient(x, y, radius, color, Color.TRANSPARENT, Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, w, h, p)
     }

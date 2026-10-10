@@ -337,6 +337,13 @@ internal class WpBubbleDrawable(
 ) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val path = android.graphics.Path()
+    private var drawableAlpha = 255
+    private var drawableColorFilter: ColorFilter? = null
+
+    private fun alphaColor(color: Int): Int {
+        val alpha = Color.alpha(color) * drawableAlpha / 255
+        return (color and 0x00ffffff) or (alpha shl 24)
+    }
 
     override fun draw(canvas: Canvas) {
         val r = RectF(bounds)
@@ -354,20 +361,30 @@ internal class WpBubbleDrawable(
         val distance = (abs(r.width() * dx) + abs(r.height() * dy)) / 2f
         val cx = r.centerX(); val cy = r.centerY()
         paint.style = Paint.Style.FILL
+        // Border/gloss are translucent and are painted last. Reset Paint before every fill;
+        // otherwise their 25% alpha survives the next RecyclerView redraw and dims the whole
+        // message bubble a few seconds after it was sent.
+        paint.color = Color.WHITE
+        paint.alpha = drawableAlpha
+        paint.colorFilter = drawableColorFilter
         paint.shader = LinearGradient(cx - dx * distance, cy - dy * distance,
             cx + dx * distance, cy + dy * distance, colors,
             if (colors.size == 3) floatArrayOf(0f, .52f, 1f) else null, Shader.TileMode.CLAMP)
-        if (glow != Color.TRANSPARENT) paint.setShadowLayer(9f * density, 0f, 5f * density, glow)
+        if (glow != Color.TRANSPARENT) {
+            paint.setShadowLayer(9f * density, 0f, 5f * density, alphaColor(glow))
+        }
         canvas.drawPath(path, paint)
         paint.clearShadowLayer(); paint.shader = null
 
         if (border != null) {
-            paint.style = Paint.Style.STROKE; paint.strokeWidth = density; paint.color = border
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = density
+            paint.color = alphaColor(border)
             canvas.drawPath(path, paint)
         }
         if (glossy) {
             paint.style = Paint.Style.STROKE; paint.strokeWidth = density
-            paint.color = Color.argb(if (mine) 64 else 69, 255, 255, 255)
+            paint.color = Color.argb((if (mine) 64 else 69) * drawableAlpha / 255, 255, 255, 255)
             val inset = .75f * density
             val top = RectF(r.left + inset, r.top + inset, r.right - inset, r.bottom - inset)
             path.reset(); path.addRoundRect(top, radii, android.graphics.Path.Direction.CW)
@@ -377,7 +394,18 @@ internal class WpBubbleDrawable(
         paint.style = Paint.Style.FILL
     }
 
-    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
-    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+    override fun setAlpha(alpha: Int) {
+        val next = alpha.coerceIn(0, 255)
+        if (drawableAlpha == next) return
+        drawableAlpha = next
+        invalidateSelf()
+    }
+
+    override fun setColorFilter(colorFilter: ColorFilter?) {
+        if (drawableColorFilter === colorFilter) return
+        drawableColorFilter = colorFilter
+        invalidateSelf()
+    }
+
     @Deprecated("Deprecated in Android") override fun getOpacity() = PixelFormat.TRANSLUCENT
 }

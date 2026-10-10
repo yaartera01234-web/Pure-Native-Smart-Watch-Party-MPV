@@ -536,6 +536,10 @@ private class RaveAudioCanvas(context: Context) : View(context) {
             else 0xffb4afd1.toInt()
         val bars = if (miniMode) miniTheme.bar else intArrayOf(0xff54e8ff.toInt(), 0xffff5ebc.toInt())
 
+        // Text/rings leave translucent colors in this shared Paint; shaders always start opaque.
+        p.style = Paint.Style.FILL
+        p.color = Color.WHITE
+        p.alpha = 255
         p.shader = LinearGradient(0f, 0f, w, h, music, null, Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, w, h, p)
         p.shader = RadialGradient(w * .83f, 0f, w * .42f, glowA, Color.TRANSPARENT, Shader.TileMode.CLAMP)
@@ -565,6 +569,8 @@ private class RaveAudioCanvas(context: Context) : View(context) {
         c.drawText("Smart Party Plus · Now Playing", tx, h * .58f, p)
 
         val base = h * .77f; val barW = maxOf(2f, w * .006f); val gap = barW * 1.75f
+        p.color = Color.WHITE
+        p.alpha = 255
         p.shader = LinearGradient(0f, base - h * .15f, 0f, base, bars, null, Shader.TileMode.CLAMP)
         repeat(18) { i ->
             val wave = .28f + .72f * kotlin.math.abs(kotlin.math.sin((phase * Math.PI + i * .73))).toFloat()

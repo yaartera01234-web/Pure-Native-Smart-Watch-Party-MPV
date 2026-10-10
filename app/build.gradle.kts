@@ -18,8 +18,8 @@ android {
         // Exact Synkplay v0.23.0 JNI/native bundle is built against Android 8 (API 26).
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.0.2"
+        versionCode = 7
+        versionName = "1.0.3"
         // Reference player ships one native MPV ABI; keeping it exact also avoids a
         // needlessly huge universal APK.
         ndk { abiFilters += listOf("arm64-v8a") }
