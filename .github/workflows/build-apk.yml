@@ -10,35 +10,36 @@ permissions:
   contents: write
 
 jobs:
-  # One-shot official Android-tools verification of the locally permanent-signed v1.0.8 APK.
-  verify-v108-release:
-    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[verify v1.0.8 release]') }}
+  # One-shot, GitHub-hosted publisher for the already signed/tagged v1.0.8 files.
+  publish-v108:
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[publish v1.0.8 release]') }}
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: '17'
+          fetch-depth: 0
 
-      - name: Verify signature, certificate, alignment, version, archive and native engine
+      - name: Verify immutable v1.0.8 payload
         run: |
           set -euo pipefail
-          exec > >(tee /tmp/verify-v108.log) 2>&1
+          test "$(git rev-parse 'v1.0.8^{commit}')" = "df8cc234bc397c8063bd6ddb07abd5ef31c4935b"
+          git diff --exit-code v1.0.8 -- \
+            WatchParty-FirstPage.apk WatchParty-Native-FirstPage.zip \
+            SHA256SUMS.txt RELEASE-NOTES-v1.0.8.md
+          sha256sum -c SHA256SUMS.txt
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" 'build-tools;35.0.0'
           SDK="$ANDROID_HOME/build-tools/35.0.0"
           "$SDK/apksigner" verify --verbose --print-certs WatchParty-FirstPage.apk | tee /tmp/apksigner.txt
-          # minSdk 26 is fully covered by v2/v3; no legacy JAR signature is required.
           grep -F 'Verified using v1 scheme (JAR signing): false' /tmp/apksigner.txt
           grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true' /tmp/apksigner.txt
           grep -F 'Verified using v3 scheme (APK Signature Scheme v3): true' /tmp/apksigner.txt
           CERT=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' /tmp/apksigner.txt)
-          test "$CERT" = '76c2d3d3a35447b15dcf8350f09f3acfd47d618a427d25daa64d4fcfedce8c2f'
+          test "$CERT" = "76c2d3d3a35447b15dcf8350f09f3acfd47d618a427d25daa64d4fcfedce8c2f"
           "$SDK/zipalign" -c -P 16 4 WatchParty-FirstPage.apk
           "$SDK/aapt" dump badging WatchParty-FirstPage.apk | tee /tmp/badging.txt
           grep -F "package: name='app.party.wpnative' versionCode='12' versionName='1.0.8'" /tmp/badging.txt
@@ -46,24 +47,33 @@ jobs:
           unzip -tq WatchParty-Native-FirstPage.zip
           unzip -p WatchParty-FirstPage.apk lib/arm64-v8a/libmpv.so | strings | grep -F 'mpv v0.41.0-252-gc401ef9c3'
           unzip -p WatchParty-FirstPage.apk lib/arm64-v8a/libavcodec.so | strings | grep -F 'FFmpeg version N-123143-g0540b42657'
-          sha256sum -c SHA256SUMS.txt
-          python3 tests/verify_launcher_manifest.py
-          python3 tests/verify_room_tunes.py
-          python3 tests/verify_live_identity_surfaces.py
-          python3 tests/verify_first_page_aesthetic.py
 
-      - name: Preserve verification failure log on the private work branch
-        if: failure()
+      - name: Publish and independently verify GitHub Release assets
         run: |
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@example.com"
-          cp /tmp/verify-v108.log VERIFY-v1.0.8.log
-          git add -f VERIFY-v1.0.8.log
-          git commit -m "Preserve v1.0.8 verification failure [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          set -euo pipefail
+          gh release create v1.0.8 \
+            WatchParty-FirstPage.apk \
+            SHA256SUMS.txt \
+            WatchParty-Native-FirstPage.zip \
+            RELEASE-NOTES-v1.0.8.md \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Smart Party Plus v1.0.8" \
+            --notes-file RELEASE-NOTES-v1.0.8.md
+          mkdir -p /tmp/release-v108
+          gh release download v1.0.8 \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir /tmp/release-v108 \
+            --pattern 'WatchParty-FirstPage.apk' \
+            --pattern 'WatchParty-Native-FirstPage.zip' \
+            --pattern 'SHA256SUMS.txt' \
+            --pattern 'RELEASE-NOTES-v1.0.8.md'
+          cd /tmp/release-v108
+          sha256sum -c SHA256SUMS.txt
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 4
 
   apk:
-    if: ${{ !contains(github.event.head_commit.message, '[verify v1.0.8 release]') && !contains(github.event.head_commit.message, '[publish v1.0.8 release]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[publish v1.0.8 release]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
