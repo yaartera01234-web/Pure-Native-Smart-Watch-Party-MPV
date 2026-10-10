@@ -259,21 +259,41 @@ internal class WpPageDrawable(
     private val density: Float = 1f
 ) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var drawableAlpha = 255
+    private var drawableColorFilter: ColorFilter? = null
+
+    /**
+     * Dots are painted last with a very small alpha. Paint keeps that alpha between draw calls,
+     * so a later invalidation (for example an EditText cursor blink while typing) used to make
+     * the page shaders almost transparent and expose the grey window background. Reset every
+     * shader pass explicitly so focus, typing and IME resize redraw the exact same full theme.
+     */
+    private fun useShader(shader: Shader) {
+        paint.shader = shader
+        paint.color = Color.WHITE
+        paint.alpha = drawableAlpha
+        paint.colorFilter = drawableColorFilter
+    }
+
     override fun draw(canvas: Canvas) {
         val b = bounds
         val w = b.width().toFloat().coerceAtLeast(1f)
         val h = b.height().toFloat().coerceAtLeast(1f)
-        paint.shader = LinearGradient(b.left.toFloat(), b.top.toFloat(), b.right.toFloat(), b.bottom.toFloat(),
-            theme.page, null, Shader.TileMode.CLAMP)
+        useShader(LinearGradient(
+            b.left.toFloat(), b.top.toFloat(), b.right.toFloat(), b.bottom.toFloat(),
+            theme.page, null, Shader.TileMode.CLAMP
+        ))
         canvas.drawRect(b, paint)
         theme.glows.forEach { glow ->
             val color = glow.color
-            paint.shader = RadialGradient(
+            useShader(RadialGradient(
                 b.left + glow.x * w, b.top + glow.y * h, max(w, h) * glow.radius,
-                color, color and 0x00ffffff, Shader.TileMode.CLAMP)
+                color, color and 0x00ffffff, Shader.TileMode.CLAMP
+            ))
             canvas.drawRect(b, paint)
         }
         paint.shader = null
+        paint.colorFilter = drawableColorFilter
         // body::before: .6px white dots at 5px, fading before the lower edge.
         val step = 5f * density
         val radius = .55f * density
@@ -281,15 +301,28 @@ internal class WpPageDrawable(
         var row = 0
         while (y < b.top + h * .85f) {
             val fade = (1f - ((y - b.top) / (h * .85f))).coerceIn(0f, 1f)
-            paint.color = Color.argb((13f * fade).toInt(), 255, 255, 255)
+            val dotAlpha = (13f * fade * drawableAlpha / 255f).toInt().coerceIn(0, 255)
+            paint.color = Color.argb(dotAlpha, 255, 255, 255)
             var x = b.left + if (row % 2 == 0) step else step * .5f
             while (x < b.right) { canvas.drawCircle(x, y, radius, paint); x += step }
             y += step; row++
         }
     }
-    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
-    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
-    @Deprecated("Deprecated in Android") override fun getOpacity() = PixelFormat.OPAQUE
+
+    override fun setAlpha(alpha: Int) {
+        val next = alpha.coerceIn(0, 255)
+        if (drawableAlpha == next) return
+        drawableAlpha = next
+        invalidateSelf()
+    }
+
+    override fun setColorFilter(colorFilter: ColorFilter?) {
+        if (drawableColorFilter === colorFilter) return
+        drawableColorFilter = colorFilter
+        invalidateSelf()
+    }
+
+    @Deprecated("Deprecated in Android") override fun getOpacity() = PixelFormat.TRANSLUCENT
 }
 
 /** CSS-like gradient chat bubble with glow, edge and inset top gloss. */
