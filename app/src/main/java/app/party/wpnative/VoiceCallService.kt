@@ -282,8 +282,14 @@ class VoiceCallService : Service() {
         source = madeSource
         val track = madeFactory.createAudioTrack("wp-audio-$callId", madeSource)
         track.setEnabled(!muted)
-        pc.addTransceiver(track, RtpTransceiver.RtpTransceiverInit(
-            RtpTransceiver.RtpTransceiverDirection.SEND_RECV))
+        // Caller offer ka audio m-line banata hai. Callee pe pehle se apna alag
+        // transceiver banane se kuch Unified-Plan builds answer ko recvonly kar dete hain:
+        // caller ki awaaz callee ko milti hai, magar callee ki caller ko nahi. Callee track
+        // remote offer set hone ke BAAD usi offered m-line ke sender par attach hota hai.
+        if (outgoing) {
+            pc.addTransceiver(track, RtpTransceiver.RtpTransceiverInit(
+                RtpTransceiver.RtpTransceiverDirection.SEND_RECV))
+        }
         localTrack = track
         true
     } catch (_: Throwable) { false }
@@ -348,11 +354,38 @@ class VoiceCallService : Service() {
         }, MediaConstraints())
     }
 
+    /**
+     * Answerer ka microphone caller ke offered audio m-line par lagao. Is role-specific
+     * binding se SDP answer sendrecv rehta hai; extra unassociated callee m-line nahi banti.
+     */
+    private fun attachAnswererAudio(): Boolean {
+        val pc = peerConnection ?: return false
+        val track = localTrack ?: return false
+        return try {
+            val offered = pc.transceivers.firstOrNull { transceiver ->
+                transceiver.mid != null && transceiver.receiver.track() is AudioTrack
+            }
+            if (offered != null) {
+                val attached = offered.sender.setTrack(track, false)
+                offered.setDirection(RtpTransceiver.RtpTransceiverDirection.SEND_RECV)
+                attached
+            } else {
+                // Defensive fallback for a non-standard Unified-Plan implementation;
+                // addTrack reuses a compatible recvonly offered transceiver by spec.
+                pc.addTrack(track, listOf("wp-audio-stream-$callId")) != null
+            }
+        } catch (_: Throwable) { false }
+    }
+
     private fun acceptOffer(sdp: String) {
         if (sdp.isBlank()) return
         peerConnection?.setRemoteDescription(object : SimpleSdp() {
             override fun onSetSuccess() {
                 flushCandidates()
+                if (!attachAnswererAudio()) {
+                    main.post { endLocal("failed", true) }
+                    return
+                }
                 peerConnection?.createAnswer(object : SimpleSdp() {
                     override fun onCreateSuccess(desc: SessionDescription) {
                         peerConnection?.setLocalDescription(object : SimpleSdp() {

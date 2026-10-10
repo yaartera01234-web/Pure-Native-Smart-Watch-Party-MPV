@@ -416,7 +416,7 @@ class ChatActivity : Activity(), ChatHost {
 
     /** Is line ka maal badla hai ya nahi — DiffUtil isi se pakad leta hai. */
     private fun sigOf(m: Msg): String =
-        m.text + "|" + m.read + "|" + m.replyText + "|" + m.time + "|" + m.deleted + "|" +
+        m.text + "|" + m.read + "|" + m.replyText + "|" + m.replyMid + "|" + m.time + "|" + m.deleted + "|" +
             m.type + "|" + m.mediaKey + "|" + m.dur + "|" +
             m.rx.entries.joinToString(",") { "${it.key}:${it.value}:${m.rxCounts[it.key] ?: 1}" }
 
@@ -860,6 +860,7 @@ class ChatActivity : Activity(), ChatHost {
             read = cm.read,
             replyName = cm.replyName,
             replyText = cm.replyText,
+            replyMid = cm.replyMid,
             fid = cm.id,
             ts = cm.ts,
             deleted = cm.deleted,
@@ -949,7 +950,7 @@ class ChatActivity : Activity(), ChatHost {
                      else "L${it.ts}_${it.id}",
                 from = if (it.own) me else peer,
                 text = it.text, ts = it.ts, read = it.read,
-                replyName = it.replyName, replyText = it.replyText,
+                replyName = it.replyName, replyText = it.replyText, replyMid = it.replyMid,
                 type = it.type, media = if (it.mediaUrl.isNotBlank()) "url:${it.mediaUrl}" else "",
                 dur = it.dur, wave = it.wave,
                 reactions = LinkedHashMap(it.reactionActors)
@@ -1043,15 +1044,34 @@ class ChatActivity : Activity(), ChatHost {
                 raw.substringBefore('?').lowercase(Locale.ROOT).endsWith(".gif"))
     } catch (_: Throwable) { false }
 
+    private fun replyLabel(m: Msg): String = when (m.type) {
+        "photo" -> "🖼️ Photo"
+        "gif" -> "🎞️ GIF"
+        "voice" -> "🎤 Voice message"
+        else -> m.text
+    }
+
+    /** Text/media sab mein exact target id bhejo taa-ke quote tap original par le jaye. */
+    private fun consumeReply(local: Msg, remote: ChatMsg) {
+        val target = replyTo ?: return
+        local.replyName = if (target.own) "You" else peer
+        local.replyText = replyLabel(target)
+        local.replyMid = target.fid
+        remote.replyName = local.replyName
+        remote.replyText = local.replyText
+        remote.replyMid = local.replyMid
+        clearReply()
+    }
+
     private fun sendGif(bytes: ByteArray?, directUrl: String) {
         val now = System.currentTimeMillis()
         val key = "L$now"
         if (bytes != null) MediaCache.save(this, key, bytes)
         val m = Msg(nextId++, "", true, timeShort(now), dayLabel(now),
             read = false, ts = now, type = "gif", mediaKey = key, mediaUrl = directUrl)
-        msgs.add(m)
-
         val cm = ChatMsg(from = me, text = "", ts = now, type = "gif")
+        consumeReply(m, cm)
+        msgs.add(m)
         cm.media = if (directUrl.isNotBlank()) "url:$directUrl"
             else bytes?.let { MediaCache.b64(it) }.orEmpty()
         if (FirebaseChat.send(this, chatId, cm) { pruneAfterSend() }) {
@@ -1106,9 +1126,9 @@ class ChatActivity : Activity(), ChatHost {
 
         val m = Msg(nextId++, "", true, timeShort(now), dayLabel(now),
             read = false, ts = now, type = "photo", mediaKey = key)
-        msgs.add(m)
-
         val cm = ChatMsg(from = me, text = "", ts = now, type = "photo")
+        consumeReply(m, cm)
+        msgs.add(m)
         cm.media = MediaCache.b64(bytes)
         if (FirebaseChat.send(this, chatId, cm) { pruneAfterSend() }) {
             MediaCache.rename(this, key, cm.id)   // ab chaabi = asli id
@@ -1190,9 +1210,9 @@ class ChatActivity : Activity(), ChatHost {
 
         val m = Msg(nextId++, "", true, timeShort(now), dayLabel(now),
             read = false, ts = now, type = "voice", mediaKey = key, dur = dur, wave = wave)
-        msgs.add(m)
-
         val cm = ChatMsg(from = me, text = "", ts = now, type = "voice", dur = dur, wave = wave)
+        consumeReply(m, cm)
+        msgs.add(m)
         cm.media = MediaCache.b64(bytes)
         if (FirebaseChat.send(this, chatId, cm) { pruneAfterSend() }) {
             MediaCache.rename(this, key, cm.id)   // ab chaabi = asli id
@@ -1213,14 +1233,10 @@ class ChatActivity : Activity(), ChatHost {
         if (txt.isEmpty()) return
         val now = System.currentTimeMillis()
         val m = Msg(nextId++, txt, true, timeShort(now), dayLabel(now), read = false, ts = now)
-        replyTo?.let {
-            m.replyName = if (it.own) "You" else peer
-            m.replyText = it.text
-            clearReply()
-        }
+        val cm = ChatMsg(from = me, text = txt, ts = now)
+        consumeReply(m, cm)
         msgs.add(m)
         // Firebase (agar ready ho) — warna sirf local/demo
-        val cm = ChatMsg(from = me, text = txt, ts = now, replyName = m.replyName, replyText = m.replyText)
         if (FirebaseChat.send(this, chatId, cm) { pruneAfterSend() }) m.fid = cm.id
         trimToLimit()
         saveCache()
@@ -1244,7 +1260,7 @@ class ChatActivity : Activity(), ChatHost {
     private fun setReply(m: Msg) {
         replyTo = m
         replyWho.text = if (m.own) "You" else peer
-        replyWhat.text = m.text
+        replyWhat.text = replyLabel(m)
         replyWrap.visibility = View.VISIBLE
         // Website d4setReply() ki tarah: swipe karte hi likhne ka box khul jaye
         // (sirf requestFocus se keyboard hamesha nahi khulta — IMM bhi bulana padta hai)
@@ -1449,6 +1465,35 @@ class ChatActivity : Activity(), ChatHost {
         }
     }
 
+    /** Reply quote tap -> exact original bubble, phir halka pulse highlight. */
+    private fun openOriginal(reply: Msg) {
+        val before = msgs.asSequence().filter { it.id != reply.id && it.ts <= reply.ts && !it.deleted }
+        val target = reply.replyMid.takeIf { it.isNotBlank() }?.let { id ->
+            msgs.firstOrNull { it.fid == id && !it.deleted }
+        } ?: before.lastOrNull { replyLabel(it) == reply.replyText }
+        if (target == null) {
+            Toast.makeText(this, "Original message ab available nahi", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val pos = ad.indexOfKey("m:${target.id}")
+        if (pos < 0) {
+            Toast.makeText(this, "Original message ab available nahi", Toast.LENGTH_SHORT).show()
+            return
+        }
+        rv.post {
+            lm.scrollToPositionWithOffset(pos, (rv.height / 3).coerceAtLeast(0))
+            rv.post pulse@{
+                val view = rv.findViewHolderForAdapterPosition(pos)?.itemView ?: return@pulse
+                view.animate().cancel()
+                view.alpha = .45f; view.scaleX = .97f; view.scaleY = .97f
+                view.animate().alpha(1f).scaleX(1.035f).scaleY(1.035f).setDuration(180L)
+                    .withEndAction {
+                        view.animate().scaleX(1f).scaleY(1f).setDuration(160L).start()
+                    }.start()
+            }
+        }
+    }
+
     // ==================== RecyclerView ka pul (ChatHost) ====================
 
     override fun ctx(): Context = this
@@ -1459,6 +1504,7 @@ class ChatActivity : Activity(), ChatHost {
     override fun bubbleMaxWidth(): Int =
         Math.max(dp(120), (resources.displayMetrics.widthPixels * 0.85f).toInt() - dp(70))
     override fun onSwipeReply(m: Msg) = setReply(m)
+    override fun onQuoteClick(m: Msg) = openOriginal(m)
     override fun onBubbleLongPress(m: Msg) = showMsgActions(m)
     override fun onChipClick(m: Msg, emoji: String) = toggleRx(m, emoji)
 

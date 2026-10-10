@@ -18,6 +18,7 @@ data class ChatMsg(
     var read: Boolean = false,
     var replyName: String = "",
     var replyText: String = "",
+    var replyMid: String = "",      // quote tap -> original Firestore message id
     var type: String = "text",
     var media: String = "",        // photo/voice ka asli maal (base64) — SIRF Firestore ke liye
     var dur: Int = 0,              // voice: kitne second
@@ -36,6 +37,7 @@ data class ChatMsg(
             "read" to read,
             "replyName" to replyName,
             "replyText" to replyText,
+            "replyMid" to replyMid,
             "type" to type,
             "dur" to dur,
             "wave" to wave,
@@ -55,6 +57,7 @@ data class ChatMsg(
         put("read", read)
         put("replyName", replyName)
         put("replyText", replyText)
+        put("replyMid", replyMid)
         put("type", type)
         put("dur", dur)
         put("wave", wave)
@@ -79,6 +82,7 @@ data class ChatMsg(
             read = m["read"] as? Boolean ?: false,
             replyName = m["replyName"] as? String ?: "",
             replyText = m["replyText"] as? String ?: "",
+            replyMid = m["replyMid"] as? String ?: "",
             type = m["type"] as? String ?: "text",
             media = m["media"] as? String ?: "",
             dur = (m["dur"] as? Long)?.toInt() ?: 0,
@@ -102,6 +106,7 @@ data class ChatMsg(
             read = o.optBoolean("read", false),
             replyName = o.optString("replyName", ""),
             replyText = o.optString("replyText", ""),
+            replyMid = o.optString("replyMid", ""),
             type = o.optString("type", "text"),
             media = o.optString("media", ""),
             dur = o.optInt("dur", 0),

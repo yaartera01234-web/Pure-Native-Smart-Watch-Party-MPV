@@ -14,6 +14,7 @@ class Msg(
     var read: Boolean = false,
     var replyName: String = "",
     var replyText: String = "",
+    var replyMid: String = "",      // quote tap par exact original message id
     val rx: LinkedHashMap<String, Boolean> = LinkedHashMap(),
     var fid: String = "",        // Firestore document id (dobara na aaye is liye)
     var ts: Long = 0L,           // asli waqt (pagination isi se hoti hai)

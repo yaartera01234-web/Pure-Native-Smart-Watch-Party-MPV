@@ -46,6 +46,7 @@ interface ChatHost {
     fun tick(m: Msg): CharSequence
     fun bubbleMaxWidth(): Int
     fun onSwipeReply(m: Msg)
+    fun onQuoteClick(m: Msg)
     fun onBubbleLongPress(m: Msg)
     fun onChipClick(m: Msg, emoji: String)
 }
@@ -252,6 +253,8 @@ class ChatAdapter(private val host: ChatHost) : RecyclerView.Adapter<RecyclerVie
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = dp(if (partyStyle) 6 else 5)
             })
+            quote.isClickable = true
+            quote.setOnClickListener { bound?.let { host.onQuoteClick(it) } }
 
             // ---- photo (website: .chat-photo img max 220x300, radius 12) ----
             photo = ImageView(host.ctx()).apply {

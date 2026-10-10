@@ -1359,13 +1359,38 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     private fun partySig(m: Msg): String =
         m.fid + "|" + m.senderName + "|" + m.senderColor + "|" + m.text + "|" +
-            m.replyName + "|" + m.replyText + "|" + m.time + "|" + m.type + "|" + m.mediaKey + "|" +
+            m.replyName + "|" + m.replyText + "|" + m.replyMid + "|" + m.time + "|" + m.type + "|" + m.mediaKey + "|" +
             m.mediaUrl + "|" + (m.mediaKey.isNotBlank() && MediaCache.has(this, m.mediaKey)) + "|" +
             m.rx.entries.joinToString(",") { "${it.key}:${it.value}:${m.rxCounts[it.key] ?: 1}" }
 
     private fun scrollPartyBottom() {
         partyRv.post {
             if (partyAdapter.itemCount > 0) partyRv.scrollToPosition(partyAdapter.itemCount - 1)
+        }
+    }
+
+    private fun openPartyOriginal(reply: Msg) {
+        val target = reply.replyMid.takeIf { it.isNotBlank() }?.let { id ->
+            partyMsgs.firstOrNull { it.fid == id }
+        } ?: partyMsgs.asSequence().filter { it.id != reply.id && it.ts <= reply.ts }
+            .lastOrNull { partyMessageLabel(it) == reply.replyText }
+        if (target == null) {
+            Toast.makeText(this, "Original Party message ab available nahi", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val pos = partyAdapter.indexOfKey("party:${target.id}")
+        if (pos < 0) return
+        partyRv.post {
+            partyLm.scrollToPositionWithOffset(pos, (partyRv.height / 3).coerceAtLeast(0))
+            partyRv.post pulse@{
+                val view = partyRv.findViewHolderForAdapterPosition(pos)?.itemView ?: return@pulse
+                view.animate().cancel()
+                view.alpha = .45f; view.scaleX = .97f; view.scaleY = .97f
+                view.animate().alpha(1f).scaleX(1.035f).scaleY(1.035f).setDuration(180L)
+                    .withEndAction {
+                        view.animate().scaleX(1f).scaleY(1f).setDuration(160L).start()
+                    }.start()
+            }
         }
     }
 
@@ -1742,7 +1767,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             time = message.time.ifBlank {
                 SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(message.ts))
             }, day = "", read = true, ts = message.ts,
-            replyName = message.replyName, replyText = message.replyText,
+            replyName = message.replyName, replyText = message.replyText, replyMid = message.replyMid,
             fid = message.mid, type = message.type,
             mediaKey = if (message.type == "text") "" else "party_${message.mid}",
             mediaUrl = message.mediaUrl,
@@ -1863,6 +1888,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     override fun bubbleMaxWidth(): Int =
         maxOf(dp(120), (resources.displayMetrics.widthPixels * .85f).toInt() - dp(70))
     override fun onSwipeReply(m: Msg) = showPartyReply(m)
+    override fun onQuoteClick(m: Msg) = openPartyOriginal(m)
     override fun onBubbleLongPress(m: Msg) = showPartyMessageActions(m)
     override fun onChipClick(m: Msg, emoji: String) = togglePartyReaction(m, emoji)
 
