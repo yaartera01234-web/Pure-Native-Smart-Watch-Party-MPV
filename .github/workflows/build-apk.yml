@@ -10,7 +10,64 @@ permissions:
   contents: write
 
 jobs:
+  # One-shot, GitHub-hosted publisher for the already signed/tagged v1.0.7 files.
+  publish-v107:
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[publish v1.0.7 release]') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify immutable v1.0.7 payload
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'v1.0.7^{commit}')" = "940a5d2db5b0a7fc214e11af6149bc4429f01e9e"
+          git diff --exit-code v1.0.7 -- \
+            WatchParty-FirstPage.apk WatchParty-Native-FirstPage.zip \
+            SHA256SUMS.txt RELEASE-NOTES-v1.0.7.md
+          sha256sum -c SHA256SUMS.txt
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'build-tools;35.0.0'
+          SDK="$ANDROID_HOME/build-tools/35.0.0"
+          "$SDK/apksigner" verify --verbose --print-certs WatchParty-FirstPage.apk | tee /tmp/apksigner.txt
+          grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true' /tmp/apksigner.txt
+          grep -F 'Verified using v3 scheme (APK Signature Scheme v3): true' /tmp/apksigner.txt
+          CERT=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' /tmp/apksigner.txt)
+          test "$CERT" = "76c2d3d3a35447b15dcf8350f09f3acfd47d618a427d25daa64d4fcfedce8c2f"
+          "$SDK/zipalign" -c -P 16 4 WatchParty-FirstPage.apk
+          "$SDK/aapt" dump badging WatchParty-FirstPage.apk | grep -F "versionCode='11' versionName='1.0.7'"
+
+      - name: Publish and independently verify GitHub Release assets
+        run: |
+          set -euo pipefail
+          gh release create v1.0.7 \
+            WatchParty-FirstPage.apk \
+            SHA256SUMS.txt \
+            WatchParty-Native-FirstPage.zip \
+            RELEASE-NOTES-v1.0.7.md \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Smart Party Plus v1.0.7" \
+            --notes-file RELEASE-NOTES-v1.0.7.md
+          mkdir -p /tmp/release-v107
+          gh release download v1.0.7 \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir /tmp/release-v107 \
+            --pattern 'WatchParty-FirstPage.apk' \
+            --pattern 'WatchParty-Native-FirstPage.zip' \
+            --pattern 'SHA256SUMS.txt' \
+            --pattern 'RELEASE-NOTES-v1.0.7.md'
+          cd /tmp/release-v107
+          sha256sum -c SHA256SUMS.txt
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 4
+
   apk:
+    if: ${{ !contains(github.event.head_commit.message, '[publish v1.0.7 release]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
