@@ -42,6 +42,8 @@ class BgMsgService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val regs = HashMap<String, ListenerRegistration>()
     private val callRegs = HashMap<String, ListenerRegistration>()
+    /** Stable Friend Code profiles stay live even while Inbox/Chat is closed. */
+    private val profileRegs = HashMap<String, ListenerRegistration>()
     private var requestReg: ListenerRegistration? = null
     private val lastTs = HashMap<String, Long>()     // chatId -> sabse naya ts jo dekh liya
     private var notePosted = false
@@ -85,11 +87,25 @@ class BgMsgService : Service() {
             }
         }
         for (p in peers) {
-            val chatId = WpUser.friendChatId(this, p.name, p.code)
+            val code = WpUser.normalizeFriendCode(p.code)
+            if (code.length == 8 && !profileRegs.containsKey(code)) {
+                try {
+                    FirebaseChat.listenFriendProfile(this, code) { profile ->
+                        if (profile != null) {
+                            // Background notification/call closures must never freeze the name
+                            // that existed when this foreground service first attached.
+                            Friends.updateNameByCode(this, profile.code, profile.name)
+                        }
+                    }?.let { profileRegs[code] = it }
+                } catch (_: Throwable) { }
+            }
+            val chatId = WpUser.friendChatId(this, p.name, code)
             if (!regs.containsKey(chatId)) try {
                 val r = FirebaseChat.listenInboxSummary(this, chatId) { rows ->
                     // Original `un` + `lrt`: row preview, per-chat number aur global badge.
-                    DmInboxStore.applySnapshot(this, chatId, rows, me)
+                    // Own name can change while this long-lived service is already attached.
+                    val myName = WpUser.me(this)
+                    DmInboxStore.applySnapshot(this, chatId, rows, myName)
                     val m = rows.asSequence().filterNot { it.deleted }.maxByOrNull { it.ts }
                         ?: return@listenInboxSummary
                     val prev = lastTs[chatId]
@@ -97,23 +113,38 @@ class BgMsgService : Service() {
                     /* pehli snapshot sirf baseline hai — purani notification dobara nahi. */
                     if (prev == null) return@listenInboxSummary
                     if (m.ts <= prev) return@listenInboxSummary
-                    if (m.from == me || m.type == "call") return@listenInboxSummary
+                    if (m.from == myName || m.type == "call") return@listenInboxSummary
                     val body = when (m.type) {
                         "photo" -> "🖼️ Photo"
                         "gif" -> "🎞️ GIF"
                         "voice" -> "🎤 Voice message"
                         else -> m.text
                     }
-                    WpNotify.post(this, p.name, body, chatId, p.code)
+                    // A new message carries the sender's current name. The stable-code profile
+                    // listener above keeps the no-message/cache path current as well.
+                    val popupName = m.from.trim().take(40).ifBlank {
+                        Friends.currentName(this, code, p.name)
+                    }
+                    WpNotify.post(this, popupName, body, chatId, code)
                 }
                 if (r != null) regs[chatId] = r
             } catch (t: Throwable) { }
-            if (p.code.isNotBlank() && !callRegs.containsKey(chatId)) {
+            if (code.length == 8 && !callRegs.containsKey(chatId)) {
                 try {
-                    CallSignaling.listen(this, chatId, p.code) { signal ->
+                    CallSignaling.listen(this, chatId, code) { signal ->
                         when (signal.action) {
                             "invite" -> {
-                                IncomingCallController.receive(this, signal, p.name)
+                                // Invite is authenticated to this Friend Code and carries the
+                                // caller's send-time name, so even a simultaneous rename rings
+                                // and records under the new identity.
+                                val wireName = signal.body.optString("name").trim().take(40)
+                                if (wireName.isNotBlank()) {
+                                    Friends.updateNameByCode(this, code, wireName)
+                                }
+                                val callName = wireName.ifBlank {
+                                    Friends.currentName(this, code, p.name)
+                                }
+                                IncomingCallController.receive(this, signal, callName)
                                 true
                             }
                             "cancel" -> IncomingCallController.cancelled(this, signal.callId)
@@ -141,6 +172,16 @@ class BgMsgService : Service() {
             if (e.key !in valid) {
                 try { e.value.remove() } catch (_: Throwable) { }
                 callIt.remove()
+            }
+        }
+        val validCodes = peers.map { WpUser.normalizeFriendCode(it.code) }
+            .filter { it.length == 8 }.toSet()
+        val profileIt = profileRegs.entries.iterator()
+        while (profileIt.hasNext()) {
+            val e = profileIt.next()
+            if (e.key !in validCodes) {
+                try { e.value.remove() } catch (_: Throwable) { }
+                profileIt.remove()
             }
         }
     }
@@ -188,9 +229,10 @@ class BgMsgService : Service() {
         try { handler.removeCallbacksAndMessages(null) } catch (t: Throwable) { }
         for (r in regs.values) { try { r.remove() } catch (t: Throwable) { } }
         for (r in callRegs.values) { try { r.remove() } catch (_: Throwable) { } }
+        for (r in profileRegs.values) { try { r.remove() } catch (_: Throwable) { } }
         try { requestReg?.remove() } catch (_: Throwable) { }
         requestReg = null
-        regs.clear(); callRegs.clear()
+        regs.clear(); callRegs.clear(); profileRegs.clear()
         super.onDestroy()
     }
 }

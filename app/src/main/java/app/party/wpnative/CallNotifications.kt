@@ -160,7 +160,8 @@ object IncomingCallController {
             CallSignaling.send(app, signal.chatId, signal.fromCode, signal.callId, "busy")
             return
         }
-        val pending = PendingCall(signal.callId, signal.chatId, peerName, signal.fromCode,
+        val currentName = Friends.currentName(app, signal.fromCode, peerName)
+        val pending = PendingCall(signal.callId, signal.chatId, currentName, signal.fromCode,
             System.currentTimeMillis())
         PendingCallStore.save(app, pending)
         present(app, pending)
@@ -172,19 +173,23 @@ object IncomingCallController {
     }
 
     private fun present(app: Context, pending: PendingCall) {
-        CallState.update(CallSnapshot(pending.callId, pending.chatId, pending.peerName, pending.peerCode,
+        val latestName = Friends.currentName(app, pending.peerCode, pending.peerName)
+        val shown = if (latestName == pending.peerName) pending else pending.copy(peerName = latestName)
+        if (shown !== pending) PendingCallStore.save(app, shown)
+        CallState.update(CallSnapshot(shown.callId, shown.chatId, shown.peerName, shown.peerCode,
             outgoing = false, phase = CallPhase.INCOMING, status = "Incoming voice call"))
-        val remaining = (30_000L - (System.currentTimeMillis() - pending.at)).coerceAtLeast(0L)
-        if (remaining > 0L) CallNotify.showIncoming(app, pending)
+        val remaining = (30_000L - (System.currentTimeMillis() - shown.at)).coerceAtLeast(0L)
+        if (remaining > 0L) CallNotify.showIncoming(app, shown)
         timeout?.let(handler::removeCallbacks)
         timeout = Runnable {
             val live = PendingCallStore.get(app)
-            if (live?.callId != pending.callId) return@Runnable
-            CallSignaling.send(app, pending.chatId, pending.peerCode, pending.callId, "unavailable")
-            CallStore.add(app, CallRecord(pending.callId, pending.peerName, pending.peerCode,
-                pending.chatId, false, "missed", 0L, System.currentTimeMillis(), 0))
+            if (live?.callId != shown.callId) return@Runnable
+            CallSignaling.send(app, live.chatId, live.peerCode, live.callId, "unavailable")
+            val recordName = Friends.currentName(app, live.peerCode, live.peerName)
+            CallStore.add(app, CallRecord(live.callId, recordName, live.peerCode,
+                live.chatId, false, "missed", 0L, System.currentTimeMillis(), 0))
             PendingCallStore.clear(app); CallNotify.clearIncoming(app)
-            finishPendingState(pending.callId, "Missed call")
+            finishPendingState(live.callId, "Missed call")
             timeout = null
         }.also { handler.postDelayed(it, remaining) }
     }
@@ -200,7 +205,8 @@ object IncomingCallController {
         if (callId.isNotBlank() && pending.callId != callId) return
         timeout?.let(handler::removeCallbacks); timeout = null
         CallSignaling.send(ctx, pending.chatId, pending.peerCode, pending.callId, "decline")
-        CallStore.add(ctx, CallRecord(pending.callId, pending.peerName, pending.peerCode,
+        val recordName = Friends.currentName(ctx, pending.peerCode, pending.peerName)
+        CallStore.add(ctx, CallRecord(pending.callId, recordName, pending.peerCode,
             pending.chatId, false, "declined", 0L, System.currentTimeMillis(), 0))
         PendingCallStore.clear(ctx); CallNotify.clearIncoming(ctx)
         finishPendingState(pending.callId, "Call declined")
@@ -211,7 +217,8 @@ object IncomingCallController {
         val pending = PendingCallStore.get(ctx) ?: return false
         if (pending.callId != callId) return false
         timeout?.let(handler::removeCallbacks); timeout = null
-        CallStore.add(ctx, CallRecord(pending.callId, pending.peerName, pending.peerCode,
+        val recordName = Friends.currentName(ctx, pending.peerCode, pending.peerName)
+        CallStore.add(ctx, CallRecord(pending.callId, recordName, pending.peerCode,
             pending.chatId, false, "missed", 0L, System.currentTimeMillis(), 0))
         PendingCallStore.clear(ctx); CallNotify.clearIncoming(ctx)
         finishPendingState(pending.callId, "Call cancelled")

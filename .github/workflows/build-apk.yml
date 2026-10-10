@@ -22,6 +22,7 @@ jobs:
           ls -la app/src/main/java/app/party/wpnative
           python3 tests/verify_launcher_manifest.py
           python3 tests/verify_room_tunes.py
+          python3 tests/verify_live_identity_surfaces.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4

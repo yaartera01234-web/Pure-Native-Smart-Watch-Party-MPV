@@ -12,6 +12,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.google.firebase.firestore.ListenerRegistration
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -34,7 +35,8 @@ class CallsActivity : Activity() {
     )
 
     private val calls = mutableListOf<CallItem>()
-    private val avatarLookups = HashSet<String>()
+    /** One live directory listener per stable caller code; updates old and future rows. */
+    private val profileRegs = HashMap<String, ListenerRegistration>()
 
     private lateinit var listBox: LinearLayout
 
@@ -52,8 +54,14 @@ class CallsActivity : Activity() {
         super.onResume()
         reloadCalls()
         if (::listBox.isInitialized) fillList()
-        refreshHistoryAvatars()
+        refreshHistoryProfiles()
         CallMiniBar.attach(this)
+    }
+
+    override fun onDestroy() {
+        profileRegs.values.forEach { runCatching { it.remove() } }
+        profileRegs.clear()
+        super.onDestroy()
     }
 
     private fun reloadCalls() {
@@ -73,19 +81,36 @@ class CallsActivity : Activity() {
                 "cancelled" -> "Cancelled"
                 else -> (if (record.outgoing) "Outgoing" else "Incoming") + duration
             }
-            calls += CallItem(record.peerName, direction,
+            // peerName is a durable offline fallback only. Stable code always wins, so
+            // existing history rows follow every present/future display-name change.
+            val displayName = Friends.currentName(this, record.peerCode, record.peerName)
+            calls += CallItem(displayName, direction,
                 if (record.outgoing) "↗" else "↙", record.missed,
                 day.format(Date(record.endedAt)), clock.format(Date(record.endedAt)),
-                colorFor(record.peerName), record)
+                colorFor(displayName), record)
         }
     }
 
-    /** Call record ke stable Friend Code se latest original DP cache/update karo. */
-    private fun refreshHistoryAvatars() {
-        CallStore.all(this).map { it.peerCode }.filter { it.length == 8 }.distinct().forEach { code ->
-            if (!avatarLookups.add(code)) return@forEach
-            FirebaseChat.findFriendProfile(this, code) { profile ->
-                if (profile != null && !isFinishing && ::listBox.isInitialized) fillList()
+    /** Stable Friend Code se latest name + original DP ko old/new history par live lagao. */
+    private fun refreshHistoryProfiles() {
+        val valid = CallStore.all(this).map { WpUser.normalizeFriendCode(it.peerCode) }
+            .filter { it.length == 8 }.distinct().toSet()
+        valid.forEach { code ->
+            if (profileRegs.containsKey(code)) return@forEach
+            FirebaseChat.listenFriendProfile(this, code) { profile ->
+                if (profile != null && !isFinishing) {
+                    Friends.updateNameByCode(this, profile.code, profile.name)
+                    reloadCalls()
+                    if (::listBox.isInitialized) fillList()
+                }
+            }?.let { profileRegs[code] = it }
+        }
+        val it = profileRegs.entries.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            if (e.key !in valid) {
+                runCatching { e.value.remove() }
+                it.remove()
             }
         }
     }
@@ -218,7 +243,7 @@ class CallsActivity : Activity() {
                 intArrayOf(hex("#22c55e"), hex("#10b981"))).apply { shape = GradientDrawable.OVAL }
             addView(WpIcon(this@CallsActivity, "phone"), FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
             setOnClickListener {
-                VoiceCallActivity.startOutgoing(this@CallsActivity, c.record.peerName,
+                VoiceCallActivity.startOutgoing(this@CallsActivity, c.name,
                     c.record.peerCode, c.record.chatId)
             }
         }, lp(dp(36), dp(36)).apply { leftMargin = dp(10) })

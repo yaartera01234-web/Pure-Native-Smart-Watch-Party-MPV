@@ -71,7 +71,7 @@ object WpNotify {
             lastKey = key
             lastTs = now
         }
-        if (WpActive.peer == from) return                        // yahi chat khuli hai
+        if (WpActive.chatId == chatId || WpActive.peer == from) return // yahi stable chat khuli hai
         try {
             ensureChannels(ctx)
             val nid = id(chatId)

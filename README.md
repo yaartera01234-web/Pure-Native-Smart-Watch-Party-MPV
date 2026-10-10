@@ -15,6 +15,7 @@ Ab shamil hai:
 - Room text/reply/reactions/photo/voice; media tower par AES-GCM encrypted retained blobs
 - Explicit Leave par us phone ki Room chat/media cache saaf; Room khaali hone ke baad bhi shared playback/media state retained rehti hai
 - `WP1-XXXX-XXXX` Friend Codes: own-code Copy/Share, lookup, requests, Accept/Reject aur stable code-backed DM chats
+- Stable Friend Code identity propagation: background message popups and old/new Call History rows always resolve the current display name, including future renames without clearing history
 - Accepted Friend Code contacts ke darmiyan pure-native private **1-to-1 voice calls**: WebRTC/Opus, STUN+TURN, encrypted idempotent signaling, incoming/ongoing call notifications, mute, earpiece/speaker/wired/Bluetooth routing, reconnect, timer aur minimize/restore
 - Conversation-aware movie audio: adaptive native speech gate 260ms sustained voice confirm karta hai; local ya remote member bolay to movie smoothly 45% tak duck hoti aur 900ms silence par full level restore karti hai—short background noise ignore hota aur playback/Party sync kabhi pause nahi hoti
 - Earpiece par sirf connected state mein conditional proximity screen-off; ringing, connecting, reconnecting, speaker, wired aur Bluetooth par sensor hamesha off

@@ -11,6 +11,8 @@ import com.google.firebase.messaging.RemoteMessage
 /** Abhi kaun si chat khuli hai — uski notification nahi dikhenge (chat khud dikhata hai). */
 object WpActive {
     @Volatile var peer: String? = null
+    /** Stable chat identity keeps rename races from notifying the already-open DM. */
+    @Volatile var chatId: String? = null
 }
 
 /**

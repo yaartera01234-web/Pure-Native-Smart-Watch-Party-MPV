@@ -104,6 +104,13 @@ object Friends {
         return readCodes(ctx).optString(raw).takeIf { it.isNotBlank() }
     }
 
+    /** Stable Friend Code ka abhi wala naam; saved snapshot sirf offline fallback hai. */
+    fun currentName(ctx: Context, code: String, fallback: String = "Dost"): String {
+        val saved = nameForCode(ctx, code)?.trim().orEmpty()
+        if (saved.isNotBlank()) return saved.take(40)
+        return fallback.trim().take(40).ifBlank { "Dost" }
+    }
+
     /**
      * Stable Friend Code ki display-name mapping ko profile directory ke latest naam par lao.
      * List position bachti hai, duplicate purana naam nikalta hai aur code-backed chat ID nahi

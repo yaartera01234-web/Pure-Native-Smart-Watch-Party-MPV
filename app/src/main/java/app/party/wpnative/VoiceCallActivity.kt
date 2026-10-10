@@ -321,6 +321,12 @@ class VoiceCallActivity : Activity() {
             avatarLookupCode = value.peerCode
             FirebaseChat.findFriendProfile(this, value.peerCode) { profile ->
                 if (profile != null && !isFinishing) {
+                    Friends.updateNameByCode(this, profile.code, profile.name)
+                    val live = CallState.current()
+                    if (WpUser.normalizeFriendCode(live.peerCode) == profile.code &&
+                        live.peerName != profile.name) {
+                        CallState.update(live.copy(peerName = profile.name))
+                    }
                     avatarSig = ""
                     rebuildAvatar(CallState.current())
                 }

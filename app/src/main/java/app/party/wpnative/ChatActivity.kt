@@ -189,6 +189,7 @@ class ChatActivity : Activity(), ChatHost {
         statusHandler.post(statusTick)
         FirebaseChat.setPresence(this, me, true)
         WpActive.peer = peer          // is chat ki notification nahi chahiye
+        WpActive.chatId = chatId      // rename ke darmiyan bhi stable suppression
         markVisibleMessagesRead()
     }
 
@@ -198,6 +199,7 @@ class ChatActivity : Activity(), ChatHost {
         VoiceRec.abort()               // record chal raha ho to mita do
         if (::recBar.isInitialized) showRecBar(false)
         WpActive.peer = null
+        WpActive.chatId = null
         statusHandler.removeCallbacks(statusTick)
         FirebaseChat.setTyping(this, chatId, me, false)
         FirebaseChat.setPresence(this, me, false)
@@ -206,6 +208,7 @@ class ChatActivity : Activity(), ChatHost {
 
     override fun onDestroy() {
         WpActive.peer = null
+        WpActive.chatId = null
         msgListener?.remove(); msgListener = null
         presenceListener?.remove(); presenceListener = null
         typingListener?.remove(); typingListener = null

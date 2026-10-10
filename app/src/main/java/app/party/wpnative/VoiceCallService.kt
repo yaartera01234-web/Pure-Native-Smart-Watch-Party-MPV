@@ -161,8 +161,9 @@ class VoiceCallService : Service() {
     }
 
     private fun load(intent: Intent, isOutgoing: Boolean) {
-        peerName = intent.getStringExtra(EXTRA_PEER)?.take(40).orEmpty().ifBlank { "Dost" }
         peerCode = WpUser.normalizeFriendCode(intent.getStringExtra(EXTRA_CODE))
+        val suppliedName = intent.getStringExtra(EXTRA_PEER)?.take(40).orEmpty()
+        peerName = Friends.currentName(this, peerCode, suppliedName)
         chatId = intent.getStringExtra(EXTRA_CHAT).orEmpty()
         callId = intent.getStringExtra(EXTRA_CALL).orEmpty()
         outgoing = isOutgoing
@@ -691,7 +692,9 @@ class VoiceCallService : Service() {
         val duration = if (startedAt > 0L) ((ended - startedAt) / 1000L).toInt().coerceAtLeast(1) else 0
         val outcome = if (reason == "failed") "failed" else if (duration > 0) "ended" else reason
         if (callId.isNotBlank()) {
-            CallStore.add(this, CallRecord(callId, peerName, peerCode, chatId, outgoing,
+            // Never freeze the launch-time name into a newly completed record.
+            val recordName = Friends.currentName(this, peerCode, peerName)
+            CallStore.add(this, CallRecord(callId, recordName, peerCode, chatId, outgoing,
                 outcome, startedAt, ended, duration))
             if (outgoing && inviteSent) sendSummary(duration, outcome)
         }
