@@ -65,6 +65,7 @@ class InboxActivity : Activity() {
         askNotifyPermission()
         BgMsgService.start(this)      // app band hone pe bhi notification
         setContentView(buildScreen())
+        PartySleepTimer.arm(this)
         DmInboxStore.observe(inboxObserver)
         FirebaseChat.publishFriendProfile(this)
         requestListener = FirebaseChat.listenFriendRequests(this) { list ->
@@ -95,6 +96,7 @@ class InboxActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        PartySleepTimer.arm(this)
         CallMiniBar.attach(this)
         FirebaseChat.publishFriendProfile(this)
         refreshFriendAvatars()
@@ -356,10 +358,11 @@ class InboxActivity : Activity() {
     /** Neeche ka nav: shared BottomNav.kt, Chat active. */
     private fun buildBottomBar(): View = buildBottomNav(this, "chat")
 
-    /** Chat ☰ menu: Pinned chats + Chat clear + Remove Friend. */
+    /** Chat ☰ menu: Original-style Room sleep timer sits with Pin and chat actions. */
     private fun showChatMenu(anchor: View) {
         showDropMenu(anchor, listOf(
             "📌  Pinned chats" to { showPinSheet() },
+            PartySleepTimer.menuLabel(this) to { showPartySleepTimer() },
             "🗑️  Chat clear" to {
                 confirmThen(this, "Chat clear karein?", "Chat ki history clear hogi.") {
                     Toast.makeText(this, "Chat clear (demo)", Toast.LENGTH_SHORT).show()
@@ -367,6 +370,109 @@ class InboxActivity : Activity() {
             },
             "👤  Remove Friend" to { showRemoveSheet() }
         ))
+    }
+
+    /** Native version of Original Smart Music's sleep card, with the requested 20/40/60 choices. */
+    private fun showPartySleepTimer() {
+        if (!PartySleepTimer.isActive(this) && !PartyRoomRoute.hasLiveRoom()) {
+            Toast.makeText(this, "Pehle Party Room join karo", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val dialog = Dialog(this).apply { requestWindowFeature(Window.FEATURE_NO_TITLE) }
+        val active = PartySleepTimer.isActive(this)
+        val remaining = PartySleepTimer.remainingMinutes(this)
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(16), dp(18), dp(16), dp(14))
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                intArrayOf(hex("#181b3a"), hex("#0a0a1a"))).apply {
+                cornerRadius = dp(22).toFloat()
+                setStroke(dp(1), Color.argb(77, 150, 190, 255))
+            }
+        }
+        card.addView(TextView(this).apply {
+            text = "⌛"
+            textSize = 36f
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setShadowLayer(dp(12).toFloat(), 0f, 0f, Color.argb(128, 150, 190, 255))
+        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(45)))
+        card.addView(TextView(this).apply {
+            text = if (active) "Sleep Timer chalu hai" else "Sleep Timer"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8)
+        })
+        card.addView(TextView(this).apply {
+            text = if (active) {
+                "$remaining min baqi — waqt pura hone par Room ka song sab ke liye ruk jayega."
+            } else {
+                "Kitni der baad Room ka song sab ke liye rokna hai?"
+            }
+            textSize = 11.5f
+            gravity = Gravity.CENTER
+            setTextColor(hex("#c7cdf0"))
+            setPadding(dp(6), 0, dp(6), 0)
+        }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(7); bottomMargin = dp(15)
+        })
+
+        fun timerButton(label: String, strong: Boolean, action: () -> Unit): TextView = TextView(this).apply {
+            text = label
+            textSize = 12.5f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(if (strong) hex("#08192a") else hex("#e7e1ff"))
+            background = if (strong) {
+                GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    intArrayOf(hex("#a9e6ff"), hex("#63c8ff"))).apply {
+                    cornerRadius = dp(14).toFloat()
+                }
+            } else roundBox(Color.argb(18, 255, 255, 255), Color.argb(38, 255, 255, 255), 14, 1)
+            setOnClickListener { action() }
+        }
+
+        val choices = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        PartySleepTimer.choicesMinutes.forEachIndexed { index, minutes ->
+            choices.addView(timerButton("$minutes min", minutes == 60) {
+                PartySleepTimer.set(this, minutes)
+                Toast.makeText(this,
+                    "⌛ Sleep Timer: $minutes min — Room song phir ruk jayega",
+                    Toast.LENGTH_LONG).show()
+                dialog.dismiss()
+            }, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                if (index > 0) leftMargin = dp(8)
+            })
+        }
+        card.addView(choices, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+
+        if (active) {
+            card.addView(timerButton("Cancel Timer", true) {
+                PartySleepTimer.cancel(this)
+                Toast.makeText(this, "⌛ Sleep Timer cancel", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+            }, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply { topMargin = dp(9) })
+        }
+        card.addView(timerButton("Band karo", false) { dialog.dismiss() },
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply { topMargin = dp(9) })
+
+        val wrap = FrameLayout(this).apply {
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            addView(card, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        dialog.setContentView(wrap)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
     }
 
     /**

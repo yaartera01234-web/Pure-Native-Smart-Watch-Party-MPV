@@ -5,7 +5,8 @@ WebView ke baghair Kotlin/Android Views implementation.
 Ab shamil hai:
 
 - Native first/join page, Messages/Calls aur bottom navigation
-- Compact aesthetic **Smart Party +** first-page lock-up with the approved fixed sample gradient, Lobby Neon new-user default, orbit equalizer and a dark two-row Party Lobby-style digital feature matrix
+- Exact approved **Smart Party +** 240×48 outlined-vector wordmark asset—no device-font/TextView recreation—plus Lobby Neon new-user default, orbit equalizer and a dark two-row digital matrix
+- Original-derived Room-wide **⌛ Sleep Timer** in the Chat ☰ menu with 20/40/60-minute choices and cancel/reset
 - Pixel-matched native Party Lobby v48
 - Lobby ke **Enter Party** par first-page ke saved name, room aur selected tower se actual Room join
 - Native Party Room UI aur Rave-size full-width `16:9` MPV player

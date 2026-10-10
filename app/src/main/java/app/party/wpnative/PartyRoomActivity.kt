@@ -78,6 +78,19 @@ object PartyRoomRoute {
         return true
     }
 
+    fun hasLiveRoom(): Boolean {
+        val room = live?.get() ?: return false
+        return !room.isFinishing && !room.isDestroyed && PartyTower.hasLiveSession()
+    }
+
+    /** Route the Original-style local timer back to the still-live Room under Inbox/Chat. */
+    fun fireSleepTimer(): Boolean {
+        val room = live?.get() ?: return false
+        if (room.isFinishing || room.isDestroyed) return false
+        room.runOnUiThread { room.onSleepTimerExpired() }
+        return true
+    }
+
     /**
      * The call's adaptive speech gate drives local movie ducking only after sustained speech.
      * Playback/sync are untouched and no Party command is published.
@@ -272,6 +285,8 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         MediaCache.deletePrefix(this, "party_")
         PartyTower.enter(this, room, WpUser.me(this), prefs.getInt("tower", 0), this)
         PartyTaskService.start(this)
+        PartySleepTimer.arm(this)
+        PartySleepTimer.retryPending(this)
     }
 
     /**
@@ -283,6 +298,8 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         super.onResume()
         partyForeground = true
         PartyTower.attach(this)
+        PartySleepTimer.arm(this)
+        PartySleepTimer.retryPending(this)
         if (PartyTower.isConnected()) playbackSync.reset(anchor = true)
         val saved = prefs.getInt("theme", WpThemes.DEFAULT_INDEX).coerceIn(palettes.indices)
         if (saved != appliedThemeIndex) {
@@ -355,6 +372,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     private fun leavePartyNow() {
         if (leavingParty) return
+        PartySleepTimer.cancel(applicationContext)
         refreshPlaybackCheckpoint()
         leavingParty = true
         VoicePlay.stop()
@@ -1743,6 +1761,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         } else if (!wasConnected && partyForeground) {
             playbackSync.reset(anchor = true)
         }
+        if (connected) PartySleepTimer.retryPending(this)
         if (::partyOnlineText.isInitialized) {
             partyOnlineText.text = if (connected) "●  $partyMemberCount online" else "📻 Reconnect…"
             partyOnlineText.setTextColor(if (connected) hex("#86efac") else hex("#fcd34d"))
@@ -1912,6 +1931,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     override fun onPartyPlaybackState(state: PartyPlaybackState) {
         applyRetainedState(state)
+        PartySleepTimer.retryPending(this)
     }
 
     override fun onPartyPlaybackCommand(command: PartyPlaybackCommand) {
@@ -2332,6 +2352,21 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         publishPlaybackSnapshot(media, time, false, wp4.getJSONArray("epoch"), clockRunning = false)
         showPlayerActivity(WpUser.me(this), "pause", "Paused", clockForFeed(time))
         updatePlayerUi()
+    }
+
+    /** Original Smart Music behavior: local stop plus the normal Room-wide retained pause. */
+    internal fun onSleepTimerExpired() {
+        if (currentMedia == null) {
+            // Recreated Room may still be waiting for its retained media snapshot.
+            playerMain.postDelayed({
+                if (currentMedia != null) PartySleepTimer.retryPending(this)
+                else if (PartyTower.isConnected()) PartySleepTimer.markDelivered(this)
+            }, 1_500L)
+            return
+        }
+        userPausePlayback()
+        if (PartyTower.isConnected()) PartySleepTimer.markDelivered(this)
+        Toast.makeText(this, "⌛ Sleep Timer pura — Room ka song ruk gaya", Toast.LENGTH_LONG).show()
     }
 
     /** Lock-screen previous/next selects the real Room queue item and publishes it. */

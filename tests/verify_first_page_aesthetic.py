@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Release guard for the approved compact Smart Party + first-page design."""
 from pathlib import Path
+import hashlib
+import struct
 
 ROOT = Path(__file__).resolve().parents[1]
 main = (ROOT / "app/src/main/java/app/party/wpnative/MainActivity.kt").read_text(encoding="utf-8")
@@ -10,27 +12,26 @@ themes = (ROOT / "app/src/main/java/app/party/wpnative/WpTheme.kt").read_text(en
 room = (ROOT / "app/src/main/java/app/party/wpnative/PartyRoomActivity.kt").read_text(encoding="utf-8")
 
 # First-page visual brand changes only; launcher identity remains Smart Party Plus.
-assert 'text = "Smart Party"' in main
-assert 'plusView = TextView(this).apply' in main
-assert 'text = "+"' in main
 assert 'contentDescription = "Smart Party Plus"' in main
 assert 'text = "WATCH  •  LISTEN  •  TOGETHER"' in main
 assert '<string name="app_name">Smart Party Plus</string>' in strings
 assert 'android:label="@string/app_name"' in manifest
 
-# Wordmark and plus use the approved sample identity colors, never the selected theme gradient.
-for color in ("#fbf5ff", "#e68aff", "#8f7cff", "#5de8ff"):
-    assert f'Color.parseColor("{color}")' in main
-for color in ("#64eaff", "#a776ff", "#ff6fcf"):
-    assert f'Color.parseColor("{color}")' in main
-assert 'titleView.grad = approvedBrandGradient' in main
-assert 'plusView.setTextColor(hex("#06121c"))' in main
+# The approved focused sample is the runtime asset itself—not a recreated font/TextView.
+wordmark = ROOT / "app/src/main/res/drawable-nodpi/smart_party_wordmark.png"
+wordmark_bytes = wordmark.read_bytes()
+assert hashlib.sha256(wordmark_bytes).hexdigest() == \
+    "f11906c57448b40d7ea2f5e24cd76cda1110429467502a7aee5f8c8e9c124eb1"
+assert wordmark_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+assert struct.unpack(">II", wordmark_bytes[16:24]) == (960, 192)
+assert 'setImageResource(R.drawable.smart_party_wordmark)' in main
+assert 'scaleType = ImageView.ScaleType.FIT_CENTER' in main
+assert 'titleView' not in main and 'plusView' not in main and 'GradientText' not in main
 assert 'brandMetaView.setTextColor(hex("#6c6b96"))' in main
-assert 'titleView.grad = t.j' not in main
 
-# Approved native dimensions mirror the compact 360x800 HTML proposal.
+# Approved native dimensions mirror the compact proposal and the 240×48 vector viewBox.
 assert 'joinCard.addView(logo, lp(dp(44), dp(44))' in main
-assert 'brandRow.addView(plusView, lp(dp(34), dp(34))' in main
+assert 'joinCard.addView(brandImage, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))' in main
 assert 'col.addView(avatarFrame, lp(dp(84), dp(84)))' in main
 assert 'joinCard.addView(nameInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))' in main
 assert 'joinCard.addView(roomInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44))' in main

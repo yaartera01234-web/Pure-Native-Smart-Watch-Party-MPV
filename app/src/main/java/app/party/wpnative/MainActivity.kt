@@ -10,13 +10,11 @@ import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
-import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.InsetDrawable
@@ -48,14 +46,6 @@ class MainActivity : Activity() {
 
     private val themes get() = WpThemes.all
     private val bubbles get() = WpBubbles.all
-    // Approved compact sample colors are brand identity, not theme colors.
-    private val approvedBrandGradient = intArrayOf(
-        Color.parseColor("#fbf5ff"), Color.parseColor("#e68aff"),
-        Color.parseColor("#8f7cff"), Color.parseColor("#5de8ff")
-    )
-    private val approvedPlusGradient = intArrayOf(
-        Color.parseColor("#64eaff"), Color.parseColor("#a776ff"), Color.parseColor("#ff6fcf")
-    )
 
     private val towers = arrayOf("🗼 EMQX (tez!)", "🗼 HiveMQ", "🗼 tyckr")
     private var towerIndex = 0
@@ -75,8 +65,7 @@ class MainActivity : Activity() {
     private lateinit var nameInput: EditText
     private lateinit var roomInput: EditText
     private lateinit var towerBtn: Button
-    private lateinit var titleView: GradientText
-    private lateinit var plusView: TextView
+    private lateinit var brandImage: ImageView
     private lateinit var brandMetaView: TextView
     private lateinit var joinBtn: Button
     private lateinit var barTitle: TextView
@@ -197,37 +186,15 @@ class MainActivity : Activity() {
             repeatCount = android.animation.ObjectAnimator.INFINITE
             start()
         }
-        // Approved compact brand lock-up: aesthetic gradient words + separate digital plus.
-        val brandRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
+        // User-approved 240×48 lock-up is shipped as the exact same outlined vector render.
+        // No TextView/font recreation: spacing, gradient, glow and plus geometry cannot drift.
+        brandImage = ImageView(this).apply {
+            setImageResource(R.drawable.smart_party_wordmark)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = false
             contentDescription = "Smart Party Plus"
         }
-        titleView = GradientText(this).apply {
-            text = "Smart Party"
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            textSize = 32f
-            gravity = Gravity.CENTER
-            setSingleLine(true)
-            letterSpacing = -0.03f
-            setShadowLayer(dp(12).toFloat(), 0f, 0f, Color.argb(31, 185, 82, 255))
-            setAutoSizeTextTypeUniformWithConfiguration(25, 32, 1,
-                android.util.TypedValue.COMPLEX_UNIT_SP)
-        }
-        brandRow.addView(titleView, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)))
-        plusView = TextView(this).apply {
-            text = "+"
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            textSize = 26f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            rotation = 2f
-            elevation = dp(3).toFloat()
-        }
-        brandRow.addView(plusView, lp(dp(34), dp(34)).apply { leftMargin = dp(7); topMargin = dp(2) })
-        joinCard.addView(brandRow, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply {
-            topMargin = dp(2)
-        })
+        joinCard.addView(brandImage, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
 
         brandMetaView = TextView(this).apply {
             text = "WATCH  •  LISTEN  •  TOGETHER"
@@ -367,19 +334,7 @@ class MainActivity : Activity() {
             cornerRadius = dp(24).toFloat()
             setStroke(dp(1), t.joinStroke)
         }
-        // Keep the wordmark pixel-faithful to the approved sample on every theme.
-        titleView.grad = approvedBrandGradient
-        titleView.applyShader()
-        plusView.setTextColor(hex("#06121c"))
-        plusView.background = GradientDrawable(
-            GradientDrawable.Orientation.TL_BR, approvedPlusGradient
-        ).apply {
-            cornerRadii = floatArrayOf(
-                dp(10).toFloat(), dp(10).toFloat(), dp(4).toFloat(), dp(4).toFloat(),
-                dp(10).toFloat(), dp(10).toFloat(), dp(4).toFloat(), dp(4).toFloat()
-            )
-            setStroke(dp(1), hex("#a668e8ff"))
-        }
+        // The approved wordmark asset stays byte-identical across themes.
         brandMetaView.setTextColor(hex("#6c6b96"))
         joinBtn.setTextColor(t.buttonText)
         joinBtn.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
@@ -1004,25 +959,6 @@ class MainActivity : Activity() {
                 canvas.drawRoundRect(dx + b[0] * s, dy + top * s,
                     dx + (b[0] + 2.7f) * s, dy + bottom * s, r, r, barPaint)
             }
-        }
-    }
-
-    /** Gradient wala title (theme ke rang). */
-    inner class GradientText(ctx: Context) : TextView(ctx) {
-        var grad: IntArray = approvedBrandGradient
-
-        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-            super.onSizeChanged(w, h, oldw, oldh)
-            applyShader()
-        }
-
-        fun applyShader() {
-            if (width <= 0) return
-            paint.shader = LinearGradient(
-                0f, 0f, width.toFloat(), 0f,
-                grad, null, Shader.TileMode.CLAMP
-            )
-            invalidate()
         }
     }
 }
