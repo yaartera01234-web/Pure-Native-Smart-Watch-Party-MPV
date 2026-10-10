@@ -84,11 +84,13 @@ class VoiceCallService : Service() {
     private var selectedRoute = AudioDeviceInfo.TYPE_UNKNOWN
     private var routeCallbackRegistered = false
     private val routeCallback = object : AudioDeviceCallback() {
-        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) = refreshRoute()
-        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) = refreshRoute()
-        private fun refreshRoute() = main.post {
-            if (!ending && CallState.active()) {
-                applyAudioRoute(); updateProximity()
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) { refreshRoute() }
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) { refreshRoute() }
+        private fun refreshRoute() {
+            main.post {
+                if (!ending && CallState.active()) {
+                    applyAudioRoute(); updateProximity()
+                }
             }
         }
     }
