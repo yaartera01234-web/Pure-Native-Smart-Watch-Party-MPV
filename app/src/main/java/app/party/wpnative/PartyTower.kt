@@ -160,6 +160,8 @@ object PartyTower {
     private const val ROOM_BASE = "YaarParty786/x7k2/room-"
     private const val E2E_SALT = "YaarParty786-e2e-v1"
     private const val KEEP = 120
+    // Presence har 15s renew hoti hai. Teen beats miss hon to retained ghost member hide.
+    private const val MEMBER_TIMEOUT_MS = 50_000L
 
     private val towers = arrayOf(
         "wss://broker.emqx.io:8084/mqtt",
@@ -212,6 +214,22 @@ object PartyTower {
         override fun run() {
             if (connected && !explicitLeaving) publishPresence()
             main.postDelayed(this, 15_000L)
+        }
+    }
+    /** Retained MQTT presence clear miss ho jaye tab bhi departed ID forever nahi atakti. */
+    private val memberSweep = object : Runnable {
+        override fun run() {
+            val cutoff = System.currentTimeMillis() - MEMBER_TIMEOUT_MS
+            val expired = members.entries.filter { it.value.ts < cutoff }.map { it.key }
+            expired.forEach { id ->
+                members.remove(id)
+                typingUsers.remove(id)
+            }
+            if (expired.isNotEmpty()) {
+                emitMembers()
+                emitTyping()
+            }
+            if (connected && !explicitLeaving) main.postDelayed(this, 10_000L)
         }
     }
     private val typingSweep = object : Runnable {
@@ -297,7 +315,9 @@ object PartyTower {
                 publishPresence()
                 publishEvent("join")
                 main.removeCallbacks(presenceBeat)
+                main.removeCallbacks(memberSweep)
                 main.post(presenceBeat)
+                main.post(memberSweep)
                 postStatus(true, "🗼 ${towerLabel(towerIndex)} connected")
             }
 
@@ -307,7 +327,7 @@ object PartyTower {
             }
 
             override fun messageArrived(topic: String, message: MqttMessage) {
-                try { handle(topic, message.payload) } catch (_: Throwable) { }
+                try { handle(topic, message.payload, message.isRetained) } catch (_: Throwable) { }
             }
 
             override fun deliveryComplete(token: IMqttDeliveryToken?) {}
@@ -636,6 +656,7 @@ object PartyTower {
         sendTyping(false)
         explicitLeaving = true
         main.removeCallbacks(presenceBeat)
+        main.removeCallbacks(memberSweep)
         val now = System.currentTimeMillis()
         app?.getSharedPreferences(PREF, Context.MODE_PRIVATE)?.let { prefs ->
             prefs.edit()
@@ -715,9 +736,9 @@ object PartyTower {
         try { last?.waitForCompletion(8_000L) } catch (_: Throwable) {}
     }
 
-    private fun handle(topic: String, payload: ByteArray) {
+    private fun handle(topic: String, payload: ByteArray, retained: Boolean) {
         when {
-            topic.startsWith("$base/members/") -> handleMember(topic.substringAfterLast('/'), payload)
+            topic.startsWith("$base/members/") -> handleMember(topic.substringAfterLast('/'), payload, retained)
             topic.startsWith("$base/typing/") -> handleTyping(topic.substringAfterLast('/'), payload)
             topic.startsWith("$base/chat/blob/") -> handleBlob(topic.substringAfterLast('/'), payload)
             topic.startsWith("$base/chat/msg/") -> handleRetainedMessage(topic.substringAfterLast('/'), payload)
@@ -730,12 +751,22 @@ object PartyTower {
         }
     }
 
-    private fun handleMember(id: String, payload: ByteArray) {
+    private fun handleMember(id: String, payload: ByteArray, retained: Boolean) {
         if (payload.isEmpty()) {
             members.remove(id)
             if (typingUsers.remove(id) != null) emitTyping()
         } else {
             val o = JSONObject(String(payload, StandardCharsets.UTF_8))
+            val now = System.currentTimeMillis()
+            val wireTs = o.optLong("ts", now)
+            // New subscriber ko broker purani retained member row de sakta hai. Usay ek
+            // frame ke liye bhi online na dikhayein; live member ka 15s heartbeat fresh hoga.
+            if (retained && wireTs > 0L && wireTs < now - MEMBER_TIMEOUT_MS) {
+                members.remove(id)
+                if (typingUsers.remove(id) != null) emitTyping()
+                emitMembers()
+                return
+            }
             val name = o.optString("name", "Friend")
             val avatar = o.optJSONObject("avatar")
             val avatarType = avatar?.optString("type", "").orEmpty()
@@ -745,8 +776,9 @@ object PartyTower {
                 else -> ""
             }
             app?.let { DpStore.rememberRemote(it, name, avatarType, avatarData) }
+            // Local receive time drives timeout, so normal clock skew cannot age a live member.
             members[id] = PartyMember(id, name, parseColor(o.optString("color")),
-                o.optLong("ts", System.currentTimeMillis()), avatarType, avatarData)
+                now, avatarType, avatarData)
         }
         emitMembers()
     }
@@ -1005,6 +1037,7 @@ object PartyTower {
         connected = false
         joining = false
         main.removeCallbacks(presenceBeat)
+        main.removeCallbacks(memberSweep)
         main.removeCallbacks(typingSweep)
         if (typingUsers.isNotEmpty()) {
             typingUsers.clear()
