@@ -12,10 +12,13 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * Calls page (website #yp-calls ka design). Asli calls end wale step mein judengi;
- * tab tak history saaf — koi test/demo call nahi.
+ * Calls page (website #yp-calls ka design) backed by real native 1:1 voice-call history.
+ * No test/demo rows and no video/group-call path.
  */
 class CallsActivity : Activity() {
 
@@ -26,10 +29,10 @@ class CallsActivity : Activity() {
         val missed: Boolean,
         val date: String,
         val time: String,
-        val color: Int
+        val color: Int,
+        val record: CallRecord
     )
 
-    /** Test history hata di — asli call feature aane tak khaali. */
     private val calls = mutableListOf<CallItem>()
 
     private lateinit var listBox: LinearLayout
@@ -40,7 +43,37 @@ class CallsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        reloadCalls()
         setContentView(buildScreen())
+    }
+
+    override fun onResume() {
+        super.onResume()
+        reloadCalls()
+        if (::listBox.isInitialized) fillList()
+    }
+
+    private fun reloadCalls() {
+        val day = SimpleDateFormat("dd/MM", Locale.getDefault())
+        val clock = SimpleDateFormat("h:mm a", Locale.getDefault())
+        calls.clear()
+        CallStore.all(this).forEach { record ->
+            val duration = if (record.durationSec > 0) {
+                " · ${record.durationSec / 60}:${(record.durationSec % 60).toString().padStart(2, '0')}"
+            } else ""
+            val direction = when (record.outcome) {
+                "missed" -> "Missed call"
+                "declined" -> if (record.outgoing) "Declined" else "Declined by you"
+                "busy" -> "Busy"
+                "no_answer", "unavailable" -> "No answer"
+                "failed" -> "Connection failed"
+                else -> (if (record.outgoing) "Outgoing" else "Incoming") + duration
+            }
+            calls += CallItem(record.peerName, direction,
+                if (record.outgoing) "↗" else "↙", record.missed,
+                day.format(Date(record.endedAt)), clock.format(Date(record.endedAt)),
+                colorFor(record.peerName), record)
+        }
     }
 
     private fun buildScreen(): View {
@@ -170,7 +203,10 @@ class CallsActivity : Activity() {
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
                 intArrayOf(hex("#22c55e"), hex("#10b981"))).apply { shape = GradientDrawable.OVAL }
             addView(WpIcon(this@CallsActivity, "phone"), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
-            setOnClickListener { toast("Call agle step mein") }
+            setOnClickListener {
+                VoiceCallActivity.startOutgoing(this@CallsActivity, c.record.peerName,
+                    c.record.peerCode, c.record.chatId)
+            }
         }, lp(dp(42), dp(42)).apply { leftMargin = dp(12) })
 
         wrap.addView(row, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -203,8 +239,8 @@ class CallsActivity : Activity() {
         showDropMenu(anchor, listOf(
             "🗑️  Ye history clear karo" to {
                 confirmThen(this, "Ye call history clear karein?", "${c.name} ki ye ek call hat jayegi.") {
-                    calls.remove(c)
-                    fillList()
+                    CallStore.remove(this, c.record.id)
+                    reloadCalls(); fillList()
                     toast("Call history clear ho gayi")
                 }
             }
@@ -216,19 +252,24 @@ class CallsActivity : Activity() {
         showDropMenu(anchor, listOf(
             "🗑️  Call history clear" to {
                 confirmThen(this, "Call history clear karein?", "Saari calls hat jayengi.") {
-                    calls.clear()
-                    fillList()
+                    CallStore.clear(this)
+                    reloadCalls(); fillList()
                     toast("Call history clear ho gayi")
                 }
             },
             "📵  Clear missed calls only" to {
                 confirmThen(this, "Missed calls clear karein?", "Sirf missed calls hatengi.") {
-                    calls.removeAll { it.missed }
-                    fillList()
+                    CallStore.clearMissed(this)
+                    reloadCalls(); fillList()
                     toast("Missed calls clear ho gayi")
                 }
             }
         ))
+    }
+
+    private fun colorFor(value: String): Int {
+        val colors = intArrayOf(hex("#8b72ff"), hex("#22d3ee"), hex("#ec4899"), hex("#10b981"))
+        return colors[(value.lowercase(Locale.ROOT).hashCode() and Int.MAX_VALUE) % colors.size]
     }
 
     private fun toast(msg: String) {

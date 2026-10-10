@@ -330,9 +330,9 @@ class ChatActivity : Activity(), ChatHost {
             leftMargin = dp(9)
         })
 
-        // 📞 call (website .dm-call-open wala phone icon)
+        // Pure-native private 1:1 voice call (video/group deliberately not included).
         bar.addView(iconAction("phone") {
-            Toast.makeText(this@ChatActivity, "Call agle step mein", Toast.LENGTH_SHORT).show()
+            VoiceCallActivity.startOutgoing(this@ChatActivity, peer, peerCode, chatId)
         }, lp(dp(36), dp(36)))
 
         // ☰ menu
@@ -813,12 +813,13 @@ class ChatActivity : Activity(), ChatHost {
     private fun toMsg(cm: ChatMsg): Msg {
         /* Photo/voice ka asli maal (base64) phone mein save kar lo —
            baar baar Firestore se download na ho. Chaabi = asli id (warna L<waqt>). */
-        val key = if (cm.type == "text") "" else cm.id.ifBlank { "L${cm.ts}" }
+        val mediaType = cm.type == "photo" || cm.type == "voice"
+        val key = if (mediaType) cm.id.ifBlank { "L${cm.ts}" } else ""
         if (cm.media.isNotBlank() && key.isNotBlank() && !MediaCache.has(this, key)) {
             MediaCache.unb64(cm.media)?.let { MediaCache.save(this, key, it) }
         }
-        // Firestore mein is message ke sath asli media hai -> 3 din baad khud mit jaye
-        if (cm.type != "text") MediaCleanup.note(this, chatId, cm.id, cm.ts)
+        // Firestore mein is message ke sath asli photo/voice hai -> 3 din baad khud mit jaye
+        if (mediaType) MediaCleanup.note(this, chatId, cm.id, cm.ts)
         return Msg(
             id = nextId++,
             text = cm.text,

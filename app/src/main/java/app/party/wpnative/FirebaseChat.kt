@@ -73,6 +73,10 @@ object FirebaseChat {
     private fun msgs(ctx: Context, chatId: String) =
         db(ctx).collection("chats").document(chatId).collection("msgs")
 
+    /** WebRTC signaling shares the already-deployed msgs path but never becomes a bubble. */
+    private fun visibleMessage(data: Map<String, Any?>): Boolean =
+        data["type"] as? String != "call_signal"
+
     // ------------------------------------------------------------ messages
 
     /** Bhejo. Local id turant; server ne pakka save kiya to `onSaved`. */
@@ -96,7 +100,9 @@ object FirebaseChat {
             .limit(limit)
             .get()
             .addOnSuccessListener { snap ->
-                val out = snap.documents.mapNotNull { d -> d.data?.let { ChatMsg.fromMap(d.id, it) } }
+                val out = snap.documents.mapNotNull { d ->
+                    d.data?.takeIf(::visibleMessage)?.let { ChatMsg.fromMap(d.id, it) }
+                }
                 onDone(out.asReversed())          // purane upar, naye neeche
             }
             .addOnFailureListener { onDone(emptyList()) }
@@ -144,7 +150,7 @@ object FirebaseChat {
                 .get()
                 .addOnSuccessListener { snap ->
                     val latest = snap.documents.mapNotNull { d ->
-                        d.data?.let { ChatMsg.fromMap(d.id, it) }
+                        d.data?.takeIf(::visibleMessage)?.let { ChatMsg.fromMap(d.id, it) }
                     }
                     if (snap.size() < MSG_KEEP) {
                         onDone?.invoke(latest.asReversed())
@@ -202,7 +208,9 @@ object FirebaseChat {
             .limit(limit)
             .get()
             .addOnSuccessListener { snap ->
-                val out = snap.documents.mapNotNull { d -> d.data?.let { ChatMsg.fromMap(d.id, it) } }
+                val out = snap.documents.mapNotNull { d ->
+                    d.data?.takeIf(::visibleMessage)?.let { ChatMsg.fromMap(d.id, it) }
+                }
                 onDone(out.asReversed())
             }
             .addOnFailureListener { onDone(emptyList()) }
@@ -225,7 +233,9 @@ object FirebaseChat {
                 .limit(50)
                 .addSnapshotListener { snap, _ ->
                     if (snap == null) return@addSnapshotListener
-                    val out = snap.documents.mapNotNull { d -> d.data?.let { ChatMsg.fromMap(d.id, it) } }
+                    val out = snap.documents.mapNotNull { d ->
+                        d.data?.takeIf(::visibleMessage)?.let { ChatMsg.fromMap(d.id, it) }
+                    }
                     onDocs(out)
                 }
         } catch (t: Throwable) {
@@ -241,8 +251,8 @@ object FirebaseChat {
                 .limit(1)
                 .addSnapshotListener { snap, _ ->
                     val d = snap?.documents?.firstOrNull() ?: return@addSnapshotListener
-                    val m = d.data?.let { ChatMsg.fromMap(d.id, it) } ?: return@addSnapshotListener
-                    onMsg(m)
+                    val data = d.data?.takeIf(::visibleMessage) ?: return@addSnapshotListener
+                    onMsg(ChatMsg.fromMap(d.id, data))
                 }
         } catch (t: Throwable) { null }
     }

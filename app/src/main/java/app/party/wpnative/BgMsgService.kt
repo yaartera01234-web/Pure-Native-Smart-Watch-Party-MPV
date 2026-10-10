@@ -30,10 +30,10 @@ class BgMsgService : Service() {
 
         /** Inbox / Join page se service chalu karo (pehle se chalu ho to dobara mat chhede). */
         fun start(ctx: Context) {
-            if (running) return
             if (!FirebaseChat.isReady(ctx)) return
             try {
                 val i = Intent(ctx, BgMsgService::class.java)
+                if (running) { ctx.startService(i); return }
                 if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
             } catch (t: Throwable) { }
         }
@@ -41,6 +41,7 @@ class BgMsgService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private val regs = HashMap<String, ListenerRegistration>()
+    private val callRegs = HashMap<String, ListenerRegistration>()
     private val lastTs = HashMap<String, Long>()     // chatId -> sabse naya ts jo dekh liya
     private var notePosted = false
 
@@ -77,8 +78,7 @@ class BgMsgService : Service() {
         val peers = Friends.entries(this).filter { it.name != me }
         for (p in peers) {
             val chatId = WpUser.friendChatId(this, p.name, p.code)
-            if (regs.containsKey(chatId)) continue
-            try {
+            if (!regs.containsKey(chatId)) try {
                 val r = FirebaseChat.listenLast(this, chatId) { m ->
                     val prev = lastTs[chatId]
                     lastTs[chatId] = Math.max(prev ?: 0L, m.ts)
@@ -91,6 +91,16 @@ class BgMsgService : Service() {
                 }
                 if (r != null) regs[chatId] = r
             } catch (t: Throwable) { }
+            if (p.code.isNotBlank() && !callRegs.containsKey(chatId)) {
+                try {
+                    CallSignaling.listen(this, chatId, p.code) { signal ->
+                        if (signal.action == "invite") {
+                            IncomingCallController.receive(this, signal, p.name)
+                            true
+                        } else false
+                    }?.let { callRegs[chatId] = it }
+                } catch (_: Throwable) { }
+            }
         }
         // hataye gaye doston ke listener band kar do
         val valid = peers.map { WpUser.friendChatId(this, it.name, it.code) }.toSet()
@@ -101,6 +111,14 @@ class BgMsgService : Service() {
                 try { e.value.remove() } catch (t: Throwable) { }
                 it.remove()
                 lastTs.remove(e.key)
+            }
+        }
+        val callIt = callRegs.entries.iterator()
+        while (callIt.hasNext()) {
+            val e = callIt.next()
+            if (e.key !in valid) {
+                try { e.value.remove() } catch (_: Throwable) { }
+                callIt.remove()
             }
         }
     }
@@ -147,7 +165,8 @@ class BgMsgService : Service() {
         running = false
         try { handler.removeCallbacksAndMessages(null) } catch (t: Throwable) { }
         for (r in regs.values) { try { r.remove() } catch (t: Throwable) { } }
-        regs.clear()
+        for (r in callRegs.values) { try { r.remove() } catch (_: Throwable) { } }
+        regs.clear(); callRegs.clear()
         super.onDestroy()
     }
 }

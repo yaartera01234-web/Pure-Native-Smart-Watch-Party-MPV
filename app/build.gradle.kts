@@ -56,6 +56,10 @@ dependencies {
     // Party Room ka selected public MQTT tower (EMQX / HiveMQ / tyckr), pure native WSS.
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
 
+    // Pure-native 1:1 voice calls. The stripped build keeps audio/WebRTC while omitting
+    // unused software video codecs; its Java package is relocated to avoid collisions.
+    implementation("io.github.webrtc-sdk:android-prefixed-stripped:150.7871.01")
+
     // ACT7 ka Kotlin surface/wrapper. CI final APK mein iske stock native bundle ko
     // tests/mpv023 ke verified Synkplay v0.23.0 engine + rebuilt JNI se replace karta hai.
     implementation("io.github.yuroyami:libmpvkt:0.3.0")
