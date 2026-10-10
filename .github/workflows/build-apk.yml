@@ -26,6 +26,7 @@ jobs:
       - name: Verify signature, certificate, alignment, version and native engine
         run: |
           set -euo pipefail
+          exec > >(tee /tmp/verify-v107.log) 2>&1
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
@@ -46,6 +47,16 @@ jobs:
           python3 tests/verify_launcher_manifest.py
           python3 tests/verify_room_tunes.py
           python3 tests/verify_live_identity_surfaces.py
+
+      - name: Preserve verification failure log on the private work branch
+        if: failure()
+        run: |
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@example.com"
+          cp /tmp/verify-v107.log VERIFY-v1.0.7.log
+          git add -f VERIFY-v1.0.7.log
+          git commit -m "Preserve v1.0.7 verification failure [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
   apk:
     if: ${{ !contains(github.event.head_commit.message, '[verify v1.0.7 release]') }}
