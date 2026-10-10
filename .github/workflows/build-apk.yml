@@ -10,7 +10,45 @@ permissions:
   contents: write
 
 jobs:
+  # One-shot official Android-tools verification of the locally permanent-signed v1.0.7 APK.
+  verify-v107-release:
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[verify v1.0.7 release]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verify signature, certificate, alignment, version and native engine
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'build-tools;35.0.0'
+          SDK="$ANDROID_HOME/build-tools/35.0.0"
+          "$SDK/apksigner" verify --verbose --print-certs WatchParty-FirstPage.apk | tee /tmp/apksigner.txt
+          grep -F 'Verified using v1 scheme (JAR signing): true' /tmp/apksigner.txt
+          grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true' /tmp/apksigner.txt
+          grep -F 'Verified using v3 scheme (APK Signature Scheme v3): true' /tmp/apksigner.txt
+          CERT=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' /tmp/apksigner.txt)
+          test "$CERT" = '76c2d3d3a35447b15dcf8350f09f3acfd47d618a427d25daa64d4fcfedce8c2f'
+          "$SDK/zipalign" -c -P 16 4 WatchParty-FirstPage.apk
+          "$SDK/aapt" dump badging WatchParty-FirstPage.apk | tee /tmp/badging.txt
+          grep -F "versionCode='11' versionName='1.0.7'" /tmp/badging.txt
+          unzip -p WatchParty-FirstPage.apk lib/arm64-v8a/libmpv.so | strings | grep -F 'mpv v0.41.0-252-gc401ef9c3'
+          unzip -p WatchParty-FirstPage.apk lib/arm64-v8a/libavcodec.so | strings | grep -F 'FFmpeg version N-123143-g0540b42657'
+          sha256sum -c SHA256SUMS.txt
+          python3 tests/verify_launcher_manifest.py
+          python3 tests/verify_room_tunes.py
+          python3 tests/verify_live_identity_surfaces.py
+
   apk:
+    if: ${{ !contains(github.event.head_commit.message, '[verify v1.0.7 release]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,17 +151,6 @@ jobs:
             CI-CHECK-SHA256SUMS.txt
             tests/mpv023/manifest.json
             tests/mpv023/README.md
-
-      # Temporary non-secret hand-off for Arena's permanent local signing pass.
-      - name: Publish aligned v1.0.7 signing input
-        if: github.event_name == 'push' && startsWith(github.ref_name, 'arena/')
-        run: |
-          set -euo pipefail
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@example.com"
-          git add -f SmartPartyPlus-aligned-unsigned.apk
-          git commit -m "Publish v1.0.7 signing input [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       # Final release is deliberately NOT auto-signed here. Arena signs the aligned input with
       # the permanent private release key and publishes WatchParty-FirstPage.apk. This prevents
