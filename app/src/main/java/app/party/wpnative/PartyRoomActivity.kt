@@ -490,7 +490,8 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         }
         brand.addView(PartyBarsLogo(this), lp(dp(23f), dp(23f)))
         brand.addView(PartyGradientLabel(this, palette.accent).apply {
-            text = "Smart Party Plus"
+            // Compact Room-only brand keeps the live online pill fully separate on narrow phones.
+            text = "Smart Party +"
             textSize = 18f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             includeFontPadding = false
