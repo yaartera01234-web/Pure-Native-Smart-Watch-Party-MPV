@@ -48,11 +48,19 @@ class MainActivity : Activity() {
 
     private val themes get() = WpThemes.all
     private val bubbles get() = WpBubbles.all
+    // Approved compact sample colors are brand identity, not theme colors.
+    private val approvedBrandGradient = intArrayOf(
+        Color.parseColor("#fbf5ff"), Color.parseColor("#e68aff"),
+        Color.parseColor("#8f7cff"), Color.parseColor("#5de8ff")
+    )
+    private val approvedPlusGradient = intArrayOf(
+        Color.parseColor("#64eaff"), Color.parseColor("#a776ff"), Color.parseColor("#ff6fcf")
+    )
 
     private val towers = arrayOf("🗼 EMQX (tez!)", "🗼 HiveMQ", "🗼 tyckr")
     private var towerIndex = 0
-    private var themeIndex = 1   // Night Purple (default)
-    private var bubbleIndex = 1  // 1 · Pink + Cyan (default)
+    private var themeIndex = WpThemes.DEFAULT_INDEX   // Lobby Neon for a brand-new user
+    private var bubbleIndex = WpBubbles.LOBBY_NEON_INDEX
 
     // Avatar
     private var avatarBitmap: Bitmap? = null
@@ -128,8 +136,9 @@ class MainActivity : Activity() {
 
     private fun loadPrefs() {
         towerIndex = prefs.getInt("tower", 0).coerceIn(0, towers.size - 1)
-        themeIndex = prefs.getInt("theme", 1).coerceIn(0, themes.size - 1)
-        bubbleIndex = prefs.getInt("bubble", 1).coerceIn(0, bubbles.size - 1)
+        // Defaults apply only when no preference exists; every saved user choice is retained.
+        themeIndex = prefs.getInt("theme", WpThemes.DEFAULT_INDEX).coerceIn(0, themes.size - 1)
+        bubbleIndex = prefs.getInt("bubble", WpBubbles.LOBBY_NEON_INDEX).coerceIn(0, bubbles.size - 1)
         val migrated = WpThemes.migrateCoupling(prefs, themeIndex, bubbleIndex)
         themeIndex = migrated.theme
         bubbleIndex = migrated.bubble
@@ -201,6 +210,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setSingleLine(true)
             letterSpacing = -0.03f
+            setShadowLayer(dp(12).toFloat(), 0f, 0f, Color.argb(31, 185, 82, 255))
             setAutoSizeTextTypeUniformWithConfiguration(25, 32, 1,
                 android.util.TypedValue.COMPLEX_UNIT_SP)
         }
@@ -357,17 +367,20 @@ class MainActivity : Activity() {
             cornerRadius = dp(24).toFloat()
             setStroke(dp(1), t.joinStroke)
         }
-        titleView.grad = t.j
+        // Keep the wordmark pixel-faithful to the approved sample on every theme.
+        titleView.grad = approvedBrandGradient
         titleView.applyShader()
-        plusView.setTextColor(t.buttonText)
-        plusView.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, t.j).apply {
+        plusView.setTextColor(hex("#06121c"))
+        plusView.background = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR, approvedPlusGradient
+        ).apply {
             cornerRadii = floatArrayOf(
                 dp(10).toFloat(), dp(10).toFloat(), dp(4).toFloat(), dp(4).toFloat(),
                 dp(10).toFloat(), dp(10).toFloat(), dp(4).toFloat(), dp(4).toFloat()
             )
-            setStroke(dp(1), withAlpha(t.focus, 180))
+            setStroke(dp(1), hex("#a668e8ff"))
         }
-        brandMetaView.setTextColor(withAlpha(t.accentText, 190))
+        brandMetaView.setTextColor(hex("#6c6b96"))
         joinBtn.setTextColor(t.buttonText)
         joinBtn.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
             if (t.key == "purple") t.j else t.fill2).apply {
@@ -390,6 +403,7 @@ class MainActivity : Activity() {
         digitalHeader.setTextColor(withAlpha(t.accentText, 205))
         digitalReady.setTextColor(hex("#76ffd8"))
         featureChips.forEachIndexed { index, chip ->
+            chip.setTextColor(hex("#e8e5fa"))
             chip.background = digitalChipBackground(t, index)
         }
         digitalLine.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
@@ -878,15 +892,24 @@ class MainActivity : Activity() {
         return digitalPanel
     }
 
-    private fun digitalChipBackground(t: WpTheme, index: Int): GradientDrawable =
-        GradientDrawable(GradientDrawable.Orientation.TL_BR,
-            intArrayOf(withAlpha(t.chip, 235), withAlpha(t.bg.last(), 235))).apply {
+    private fun digitalChipBackground(t: WpTheme, index: Int): GradientDrawable {
+        // t.chip is deliberately translucent; forcing its alpha to 235 turned Night Purple
+        // almost solid white. Use dark surface RGBs and keep the approved sample exact there.
+        val fill = if (t.key == "purple") {
+            intArrayOf(hex("#eb131231"), hex("#eb050c1d"))
+        } else {
+            intArrayOf(withAlpha(t.input.first(), 235), withAlpha(t.page.last(), 235))
+        }
+        val stroke = if (t.key == "purple") hex("#318175c7")
+            else withAlpha(if (index % 2 == 0) t.focus else t.j.last(), 58)
+        return GradientDrawable(GradientDrawable.Orientation.TL_BR, fill).apply {
             cornerRadii = floatArrayOf(
                 dp(5).toFloat(), dp(5).toFloat(), dp(10).toFloat(), dp(10).toFloat(),
                 dp(5).toFloat(), dp(5).toFloat(), dp(10).toFloat(), dp(10).toFloat()
             )
-            setStroke(dp(1), withAlpha(if (index % 2 == 0) t.focus else t.j.last(), 74))
+            setStroke(dp(1), stroke)
         }
+    }
 
     private fun roundBox(fill: Int, stroke: Int, radiusDp: Int, strokeDp: Int): GradientDrawable =
         GradientDrawable().apply {
@@ -986,7 +1009,7 @@ class MainActivity : Activity() {
 
     /** Gradient wala title (theme ke rang). */
     inner class GradientText(ctx: Context) : TextView(ctx) {
-        var grad: IntArray = intArrayOf(hex("#ff66bd"), hex("#a477ff"), hex("#55baff"))
+        var grad: IntArray = approvedBrandGradient
 
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             super.onSizeChanged(w, h, oldw, oldh)

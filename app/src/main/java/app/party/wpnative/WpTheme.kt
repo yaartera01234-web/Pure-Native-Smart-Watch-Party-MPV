@@ -63,6 +63,8 @@ internal data class WpTheme(
 }
 
 internal object WpThemes {
+    const val DEFAULT_INDEX = 0 // Lobby Neon; saved user choices always override this.
+
     private fun c(value: String) = Color.parseColor(value)
     private fun cs(vararg values: String) = values.map(::c).toIntArray()
     private fun glow(x: Float, y: Float, radius: Float, value: String) = WpGlow(x, y, radius, c(value))
@@ -70,7 +72,7 @@ internal object WpThemes {
     /** Native order is intentionally preserved for existing numeric preferences. */
     val all: List<WpTheme> = listOf(
         WpTheme(
-            "neon", "Lobby Neon", cs("#050719", "#16112d", "#0b1829"),
+            "neon", "Lobby Neon (default)", cs("#050719", "#16112d", "#0b1829"),
             cs("#fa35de", "#c03cff", "#36d9fa"), cs("#050719", "#050719"),
             listOf(glow(1f, 0f, .58f, "#42721d75"), glow(0f, 1f, .58f, "#3d146183")),
             cs("#ef291337", "#ee121d35"), cs("#e81e1431", "#e80d1d33"),
@@ -83,7 +85,7 @@ internal object WpThemes {
             c("#45c575ef"), c("#77dc77ef"), cs("#247b84", "#4867c7"), Color.WHITE
         ),
         WpTheme(
-            "purple", "Night Purple (default)", cs("#0f0c29", "#302b63", "#24243e"),
+            "purple", "Night Purple", cs("#0f0c29", "#302b63", "#24243e"),
             cs("#ff66bd", "#a477ff", "#55baff"), cs("#080812", "#17132f", "#0a1127"),
             listOf(glow(.08f, -.10f, .48f, "#3dff64c3"), glow(1f, 0f, .47f, "#3d5b7eff"), glow(.5f, 1.15f, .52f, "#2e6f49d9")),
             cs("#d6211b44", "#d10c0d1f"), cs("#b81c183b", "#8c080918"), cs("#94060713", "#94060713"),
@@ -211,6 +213,8 @@ internal data class WpBubbleTheme(
 )
 
 internal object WpBubbles {
+    const val LOBBY_NEON_INDEX = 0
+
     private fun c(value: String) = Color.parseColor(value)
     private fun cs(vararg values: String) = values.map(::c).toIntArray()
     val all: List<WpBubbleTheme> = listOf(

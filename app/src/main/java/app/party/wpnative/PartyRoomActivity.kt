@@ -242,9 +242,9 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         PartyRoomRoute.attach(this)
-        themeIndex = prefs.getInt("theme", 1).coerceIn(palettes.indices)
+        themeIndex = prefs.getInt("theme", WpThemes.DEFAULT_INDEX).coerceIn(palettes.indices)
         val migrated = WpThemes.migrateCoupling(prefs, themeIndex,
-            prefs.getInt("bubble", 1).coerceIn(WpBubbles.all.indices))
+            prefs.getInt("bubble", WpBubbles.LOBBY_NEON_INDEX).coerceIn(WpBubbles.all.indices))
         themeIndex = migrated.theme
         playerQuality = prefs.getInt("player_quality", 144)
             .takeIf { it in listOf(144, 240, 360, 480, 720, 1080) } ?: 144
@@ -284,7 +284,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         partyForeground = true
         PartyTower.attach(this)
         if (PartyTower.isConnected()) playbackSync.reset(anchor = true)
-        val saved = prefs.getInt("theme", 1).coerceIn(palettes.indices)
+        val saved = prefs.getInt("theme", WpThemes.DEFAULT_INDEX).coerceIn(palettes.indices)
         if (saved != appliedThemeIndex) {
             themeIndex = saved
             applyWindowBase()
