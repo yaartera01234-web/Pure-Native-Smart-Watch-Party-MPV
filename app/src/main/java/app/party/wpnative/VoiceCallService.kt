@@ -263,6 +263,7 @@ class VoiceCallService : Service() {
         val madeSource = madeFactory.createAudioSource(constraints)
         source = madeSource
         val track = madeFactory.createAudioTrack("wp-audio-$callId", madeSource)
+        track.setEnabled(!muted)
         pc.addTransceiver(track, RtpTransceiver.RtpTransceiverInit(
             RtpTransceiver.RtpTransceiverDirection.SEND_RECV))
         localTrack = track

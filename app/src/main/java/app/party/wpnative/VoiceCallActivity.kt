@@ -127,20 +127,32 @@ class VoiceCallActivity : Activity() {
                 if (!CallState.active()) preview(peer, CallPhase.OUTGOING, "Calling…")
             }
             MODE_INCOMING -> {
-                val pending = PendingCallStore.get(this) ?: PendingCall(
-                    value.getStringExtra(EXTRA_CALL).orEmpty(), value.getStringExtra(EXTRA_CHAT).orEmpty(),
-                    value.getStringExtra(EXTRA_PEER).orEmpty().ifBlank { "Dost" },
-                    value.getStringExtra(EXTRA_CODE).orEmpty(), System.currentTimeMillis())
-                if (!CallState.active()) CallState.update(CallSnapshot(pending.callId, pending.chatId,
-                    pending.peerName, pending.peerCode, false, CallPhase.INCOMING,
-                    status = "Incoming voice call"))
-                if (value.getBooleanExtra(EXTRA_ANSWER, false)) answer(pending)
+                val requestedId = value.getStringExtra(EXTRA_CALL).orEmpty()
+                val stored = PendingCallStore.get(this)
+                val current = CallState.current()
+                if (stored == null) {
+                    if (current.callId != requestedId || !current.live) {
+                        CallState.update(CallSnapshot(requestedId,
+                            value.getStringExtra(EXTRA_CHAT).orEmpty(),
+                            value.getStringExtra(EXTRA_PEER).orEmpty().ifBlank { "Dost" },
+                            value.getStringExtra(EXTRA_CODE).orEmpty(), false, CallPhase.ENDED,
+                            status = "Call is no longer available"))
+                    }
+                } else {
+                    if (!CallState.active()) CallState.update(CallSnapshot(stored.callId, stored.chatId,
+                        stored.peerName, stored.peerCode, false, CallPhase.INCOMING,
+                        status = "Incoming voice call"))
+                    if (value.getBooleanExtra(EXTRA_ANSWER, false)) answer(stored)
+                }
             }
             else -> {
                 val current = CallState.current()
-                if (!current.live) PendingCallStore.get(this)?.let {
-                    CallState.update(CallSnapshot(it.callId, it.chatId, it.peerName, it.peerCode,
-                        false, CallPhase.INCOMING, status = "Incoming voice call"))
+                if (!current.live) {
+                    val pending = PendingCallStore.get(this)
+                    if (pending != null) CallState.update(CallSnapshot(pending.callId, pending.chatId,
+                        pending.peerName, pending.peerCode, false, CallPhase.INCOMING,
+                        status = "Incoming voice call"))
+                    else finish()
                 }
             }
         }
@@ -237,9 +249,12 @@ class VoiceCallActivity : Activity() {
     }
 
     private var lastControlSig = ""
+    private var sawCallState = false
 
     private fun render(value: CallSnapshot) {
         if (!::name.isInitialized) return
+        if (value.phase != CallPhase.IDLE) sawCallState = true
+        else if (sawCallState) { if (!isFinishing) finish(); return }
         name.text = value.peerName.ifBlank { "Dost" }
         status.text = value.status.ifBlank { when (value.phase) {
             CallPhase.OUTGOING -> "Calling…"; CallPhase.INCOMING -> "Incoming voice call"
@@ -277,7 +292,13 @@ class VoiceCallActivity : Activity() {
                     VoiceCallService.command(this, VoiceCallService.ACTION_SPEAKER)
                 }, lp(dp(92), dp(92)).apply { leftMargin = dp(20) })
             }
-            CallPhase.ENDED -> window.decorView.postDelayed({ if (!isFinishing) finish() }, 1500L)
+            CallPhase.ENDED -> {
+                val endedId = value.callId
+                window.decorView.postDelayed({
+                    val now = CallState.current()
+                    if (!isFinishing && now.phase == CallPhase.ENDED && now.callId == endedId) finish()
+                }, 1500L)
+            }
             CallPhase.IDLE -> Unit
             else -> controls.addView(control("End call", "☎", hex("#ed245a")) {
                 VoiceCallService.command(this, VoiceCallService.ACTION_END)

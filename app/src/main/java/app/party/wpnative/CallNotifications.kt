@@ -183,7 +183,8 @@ object IncomingCallController {
             CallSignaling.send(app, pending.chatId, pending.peerCode, pending.callId, "unavailable")
             CallStore.add(app, CallRecord(pending.callId, pending.peerName, pending.peerCode,
                 pending.chatId, false, "missed", 0L, System.currentTimeMillis(), 0))
-            PendingCallStore.clear(app); CallNotify.clearIncoming(app); CallState.clear()
+            PendingCallStore.clear(app); CallNotify.clearIncoming(app)
+            finishPendingState(pending.callId, "Missed call")
             timeout = null
         }.also { handler.postDelayed(it, remaining) }
     }
@@ -201,7 +202,8 @@ object IncomingCallController {
         CallSignaling.send(ctx, pending.chatId, pending.peerCode, pending.callId, "decline")
         CallStore.add(ctx, CallRecord(pending.callId, pending.peerName, pending.peerCode,
             pending.chatId, false, "declined", 0L, System.currentTimeMillis(), 0))
-        PendingCallStore.clear(ctx); CallNotify.clearIncoming(ctx); CallState.clear()
+        PendingCallStore.clear(ctx); CallNotify.clearIncoming(ctx)
+        finishPendingState(pending.callId, "Call declined")
     }
 
     /** Caller hung up while this phone was still ringing. */
@@ -211,8 +213,17 @@ object IncomingCallController {
         timeout?.let(handler::removeCallbacks); timeout = null
         CallStore.add(ctx, CallRecord(pending.callId, pending.peerName, pending.peerCode,
             pending.chatId, false, "missed", 0L, System.currentTimeMillis(), 0))
-        PendingCallStore.clear(ctx); CallNotify.clearIncoming(ctx); CallState.clear()
+        PendingCallStore.clear(ctx); CallNotify.clearIncoming(ctx)
+        finishPendingState(pending.callId, "Call cancelled")
         return true
+    }
+
+    private fun finishPendingState(callId: String, label: String) {
+        val current = CallState.current()
+        if (current.callId == callId) {
+            CallState.update(current.copy(phase = CallPhase.ENDED, status = label))
+            handler.postDelayed({ if (CallState.current().callId == callId) CallState.clear() }, 1_800L)
+        }
     }
 }
 
