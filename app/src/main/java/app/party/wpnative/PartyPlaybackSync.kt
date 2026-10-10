@@ -22,10 +22,13 @@ internal data class PartySyncSample(
  */
 internal class PartyPlaybackSync(
     private val myId: () -> String,
+    private val mediaKey: () -> String?,
     private val sample: () -> PartySyncSample?,
     private val send: (JSONObject) -> Unit,
     private val apply: (seek: Double?, speed: Double, playing: Boolean?) -> Unit
 ) {
+    enum class RetainedDecision { REJECT, METADATA_ONLY, APPLY }
+
     private data class Epoch(val counter: Long, val owner: String)
     private data class Peer(
         val position: Double,
@@ -40,6 +43,7 @@ internal class PartyPlaybackSync(
     private val session = UUID.randomUUID().toString().replace("-", "").take(12)
     private var sequence = 0L
     private var epoch = Epoch(0L, "")
+    private var retainedAppliedEpoch: Epoch? = null
     private val pending = LinkedHashMap<String, Double>()
     private val peers = LinkedHashMap<String, Peer>()
     private var needAnchor = true
@@ -61,11 +65,38 @@ internal class PartyPlaybackSync(
         quietUntil = now() + 2.5
     }
 
+    /** Background/disconnect peers cannot remain a slow Room reference or keep a bent speed. */
+    fun suspend() {
+        normal(); peers.clear(); pending.clear(); needAnchor = true; wasReady = false
+    }
+
+    fun currentEpoch(): JSONArray = epochJson(epoch)
+
+    /**
+     * A retained snapshot also carries the last explicit command epoch. It seeds a fresh
+     * Activity before its first command, but an equal snapshot which followed an already
+     * applied live command must not rewind that active player a second time.
+     */
+    fun onRetainedState(counter: Long, owner: String, requireRestore: Boolean): RetainedDecision {
+        if (counter >= 0L) {
+            val incoming = Epoch(counter, owner)
+            if (counter >= 1_000_000_000_000L || owner.length > 160) return RetainedDecision.REJECT
+            val order = compare(incoming, epoch)
+            if (order < 0) return RetainedDecision.REJECT
+            if (order == 0 && !requireRestore) return RetainedDecision.METADATA_ONLY
+            if (order > 0) epoch = incoming
+            retainedAppliedEpoch = incoming
+        } else retainedAppliedEpoch = null
+        reset(anchor = true)
+        return RetainedDecision.APPLY
+    }
+
     /** Metadata attached to an explicit legacy command, understood by current browser peers. */
     fun localCommand(): JSONObject {
         epoch = Epoch(epoch.counter + 1, myId())
+        retainedAppliedEpoch = null
         reset(anchor = false)
-        return JSONObject().put("epoch", epochJson(epoch)).put("media", sample()?.media ?: "none:")
+        return JSONObject().put("epoch", epochJson(epoch)).put("media", mediaKey() ?: "none:")
     }
 
     /** Reject stale/mismatched modern commands, while accepting legacy clients unchanged. */
@@ -82,19 +113,22 @@ internal class PartyPlaybackSync(
         }
         val incoming = parseEpoch(modern.optJSONArray("epoch")) ?: return false
         if (action != "load") {
-            val expected = sample()?.media
+            val expected = mediaKey()
             if (expected != null && modern.optString("media") != expected) return false
         }
         if (compare(incoming, epoch) < 0) return false
+        if (retainedAppliedEpoch == incoming) {
+            retainedAppliedEpoch = null
+            return false
+        }
         epoch = incoming
+        retainedAppliedEpoch = null
         reset(anchor = false)
         return true
     }
 
-    fun onRetainedState() = reset(anchor = true)
-
     fun receive(from: String, packet: JSONObject?) {
-        if (from.isBlank() || from == myId() || packet == null || packet.optInt("v") != 4) return
+        if (from.isBlank() || from == myId() || from.length > 160 || packet == null || packet.optInt("v") != 4) return
         val incoming = parseEpoch(packet.optJSONArray("epoch")) ?: return
         when (packet.optString("kind")) {
             "probe" -> {
@@ -128,11 +162,13 @@ internal class PartyPlaybackSync(
                 val media = value.optString("media")
                 val position = value.optDouble("pos", Double.NaN)
                 val remoteRate = value.optDouble("rate", 1.0)
-                if (media != self.media || !position.isFinite() || position < 0 ||
-                    remoteRate !in listOf(.95, .995, 1.0, 1.005)) return
+                val remotePlayingValue = value.opt("playing")
+                if (media != self.media || !position.isFinite() || position < 0 || position > 100_000_000 ||
+                    remotePlayingValue !is Boolean || remoteRate !in listOf(.95, .995, 1.0, 1.005)) return
                 val old = peers[from]
                 if (old != null && sent <= old.sent) return
-                val remotePlaying = value.optBoolean("playing")
+                if (peers.size >= 64 && old == null) return
+                val remotePlaying = remotePlayingValue
                 val moving = remotePlaying && !value.optBoolean("buffering")
                 peers[from] = Peer(position + if (moving) rtt * .5 * remoteRate else 0.0,
                     remotePlaying, moving, remoteRate, receivedAt, sent, media)
@@ -207,7 +243,8 @@ internal class PartyPlaybackSync(
 
     private fun currentSample(): PartySyncSample? {
         val value = sample() ?: return null
-        if (!value.ready || value.media.isBlank() || !value.position.isFinite() || value.position < 0) return null
+        if (!value.ready || value.media.isBlank() || !value.position.isFinite() || value.position < 0 ||
+            !value.rate.isFinite()) return null
         return value.copy(ready = now() >= quietUntil)
     }
 
@@ -220,10 +257,6 @@ internal class PartyPlaybackSync(
     private fun normal() {
         filtered = null; level = 0
         setSpeed(1.0)
-    }
-
-    private fun suspend() {
-        normal(); peers.clear(); pending.clear(); needAnchor = true; wasReady = false
     }
 
     private fun packet(kind: String) = JSONObject()

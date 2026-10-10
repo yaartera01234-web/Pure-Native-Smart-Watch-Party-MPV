@@ -221,6 +221,8 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     private var endedHandled = false
     private var lastNotificationTitle = ""
     private var lastNotificationPlaying = false
+    private var partyForeground = false
+    private var pendingRetainedThaw = false
     private val playerMain = Handler(Looper.getMainLooper())
     private val stopPartyTyping = Runnable { PartyTower.sendTyping(false) }
     private val playerIo = Executors.newSingleThreadExecutor()
@@ -235,29 +237,37 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     private val playbackSync by lazy {
         PartyPlaybackSync(
             myId = { PartyTower.currentMemberId() },
+            mediaKey = { currentMedia?.key() },
             sample = {
                 val media = currentMedia
                 val player = mpvVideo
                 if (media == null || player == null || !player.loaded()) null else PartySyncSample(
                     media.key(), player.rawPosition(), !player.isPaused() && !player.ended(),
-                    player.buffering(), player.syncSpeed(), true)
+                    player.buffering(), player.syncSpeed(), partyForeground && PartyTower.isConnected())
             },
             send = { PartyTower.publishSyncPacket(it) },
             apply = { seek, speed, playing ->
                 val player = mpvVideo
                 player?.setSyncSpeed(speed)
                 if (seek != null) player?.seekTo(clampPlayerTime(seek))
-                if (playing == true) player?.resume() else if (playing == false) player?.pause()
+                if (playing != null) {
+                    desiredPlaying = playing
+                    if (playing) player?.resume() else player?.pause()
+                }
             }
         )
     }
-    private var playerTickCount = 0
     private val playerTick = object : Runnable {
         override fun run() {
             updatePlayerUi()
-            playerTickCount++
-            if (PartyTower.isConnected() && playerTickCount % 2 == 0) playbackSync.tick()
             playerMain.postDelayed(this, 450L)
+        }
+    }
+    private val syncTick = object : Runnable {
+        override fun run() {
+            if (partyForeground && PartyTower.isConnected()) playbackSync.tick()
+            else playbackSync.suspend()
+            playerMain.postDelayed(this, 1_000L)
         }
     }
 
@@ -282,7 +292,9 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         bindNativePlayer()
         PartyPlayerService.bind(serviceCommand)
         playerMain.removeCallbacks(playerTick)
+        playerMain.removeCallbacks(syncTick)
         playerMain.post(playerTick)
+        playerMain.post(syncTick)
 
         // Party Bar sirf Lobby tak laati hai; actual Tower join isi Activity ko Lobby ke
         // Enter Party se kholne ke baad hota hai, saved first-page name/room/tower par.
@@ -304,7 +316,9 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
      */
     override fun onResume() {
         super.onResume()
+        partyForeground = true
         PartyTower.attach(this)
+        if (PartyTower.isConnected()) playbackSync.reset(anchor = true)
         val saved = prefs.getInt("theme", 1).coerceIn(palettes.indices)
         if (saved != appliedThemeIndex) {
             themeIndex = saved
@@ -320,6 +334,14 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         if (::roomBackdrop.isInitialized) roomBackdrop.restoreColors()
     }
 
+    override fun onPause() {
+        refreshPlaybackCheckpoint()
+        partyForeground = false
+        playbackSync.suspend()
+        mpvVideo?.setSyncSpeed(1.0)
+        super.onPause()
+    }
+
     override fun onNewIntent(newIntent: Intent?) {
         super.onNewIntent(newIntent)
         if (newIntent != null) setIntent(newIntent)
@@ -328,6 +350,9 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     }
 
     override fun onDestroy() {
+        refreshPlaybackCheckpoint()
+        partyForeground = false
+        playbackSync.suspend()
         // Recents se poori task urrna proper Leave hai; rotation/system reclaim nahi.
         if (isFinishing && !isChangingConfigurations && !leavingParty && PartyTower.hasLiveSession()) {
             PartyTaskService.leaveRemovedTask(applicationContext)
@@ -360,6 +385,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     private fun leavePartyNow() {
         if (leavingParty) return
+        refreshPlaybackCheckpoint()
         leavingParty = true
         VoicePlay.stop()
         VoiceRec.abort()
@@ -1617,7 +1643,14 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     // ------------------------------------------------ selected Tower callbacks
 
     override fun onPartyTowerStatus(connected: Boolean, label: String) {
+        val wasConnected = partyTowerUp
         partyTowerUp = connected
+        if (!connected) {
+            playbackSync.suspend()
+            mpvVideo?.setSyncSpeed(1.0)
+        } else if (!wasConnected && partyForeground) {
+            playbackSync.reset(anchor = true)
+        }
         if (::partyOnlineText.isInitialized) {
             partyOnlineText.text = if (connected) "●  $partyMemberCount online" else "📻 Reconnect…"
             partyOnlineText.setTextColor(if (connected) hex("#86efac") else hex("#fcd34d"))
@@ -1870,10 +1903,11 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         val normalizedTitle = if (normalized != media && title.startsWith("YouTube", true)) {
             directMediaName(normalized.url)
         } else title
+        pendingRetainedThaw = false
         val wp4 = playbackSync.localCommand()
         loadPartyMedia(normalized, 0.0, true, normalizedTitle)
-        PartyTower.publishPlaybackState(normalized, 0.0, true)
         PartyTower.publishPlaybackCommand("load", media = normalized, user = true, wp4 = wp4)
+        publishPlaybackSnapshot(normalized, 0.0, true, wp4.getJSONArray("epoch"))
         showPlayerActivity(WpUser.me(this), "play", "Resumed", normalizedTitle)
     }
 
@@ -1967,22 +2001,91 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     private fun sameMedia(media: PartyPlaybackMedia): Boolean = currentMedia?.key() == media.key()
 
-    private fun applyRetainedState(state: PartyPlaybackState) {
-        playbackSync.onRetainedState()
-        val age = if (state.playing) ((System.currentTimeMillis() - state.at).coerceIn(0L, 21_600_000L) / 1000.0) else 0.0
-        val target = (state.time + age).coerceAtLeast(0.0)
+    private fun queueItemForPlayback(): PartyQueueItem? {
+        partyQueue.getOrNull(partyQueueIndex)?.let { return it.copy() }
+        val key = currentMedia?.key() ?: return null
+        return partyQueue.firstOrNull {
+            PartyPlaybackMedia(it.type, it.url, it.videoId).key() == key
+        }?.copy()
+    }
+
+    private fun publishPlaybackSnapshot(
+        media: PartyPlaybackMedia,
+        time: Double,
+        playing: Boolean,
+        epoch: org.json.JSONArray = playbackSync.currentEpoch(),
+        clockRunning: Boolean = playing,
+        frozen: Boolean = false
+    ) {
+        PartyTower.publishPlaybackState(
+            media = media,
+            time = time,
+            playing = playing,
+            title = currentMediaTitle,
+            itemIndex = partyQueueIndex,
+            item = queueItemForPlayback(),
+            clockRunning = clockRunning,
+            frozen = frozen,
+            epoch = epoch
+        )
+    }
+
+    private fun refreshPlaybackCheckpoint() {
+        if (leavingParty) return
+        val media = currentMedia ?: return
         val player = mpvVideo
+        val position = if (player != null && player.loaded()) player.rawPosition() else player?.position() ?: 0.0
+        val playing = desiredPlaying && player?.ended() != true
+        PartyTower.updatePlaybackCheckpoint(
+            media = media,
+            time = position.coerceAtLeast(0.0),
+            playing = playing,
+            title = currentMediaTitle,
+            itemIndex = partyQueueIndex,
+            item = queueItemForPlayback(),
+            epoch = playbackSync.currentEpoch()
+        )
+    }
+
+    private fun applyRetainedState(state: PartyPlaybackState) {
+        val player = mpvVideo
+        val requireRestore = !sameMedia(state.media)
+        val decision = playbackSync.onRetainedState(state.epochCounter, state.epochOwner, requireRestore)
+        if (decision == PartyPlaybackSync.RetainedDecision.REJECT) return
+        if (state.queueIndex >= 0) partyQueueIndex = state.queueIndex
+        state.queueItem?.let { embedded ->
+            val localIndex = partyQueue.indexOfFirst { it.id == embedded.id }
+            if (localIndex >= 0) partyQueue[localIndex] = embedded.copy()
+        }
+        if (state.title.isNotBlank() && (currentMedia == null || sameMedia(state.media))) {
+            currentMediaTitle = state.title
+        }
+        if (decision == PartyPlaybackSync.RetainedDecision.METADATA_ONLY) {
+            renderPartyPlaylist(); updatePlayerUi(); return
+        }
+        val age = if (state.playing && state.clockRunning && !state.frozen && state.at > 0L) {
+            (System.currentTimeMillis() - state.at).coerceAtLeast(0L) / 1000.0
+        } else 0.0
+        val target = (state.time + age).coerceAtLeast(0.0)
+        pendingRetainedThaw = state.frozen && state.playing
         if (sameMedia(state.media) && player != null && player.loaded()) {
-            if (abs(player.position() - target) > 2.0) player.seekTo(clampPlayerTime(target))
+            val exactTarget = clampPlayerTime(target)
+            if (abs(player.rawPosition() - exactTarget) > .05) player.seekTo(exactTarget)
             desiredPlaying = state.playing
             if (state.playing) player.resume() else player.pause()
+            updatePlayerUi()
             return
         }
-        loadPartyMedia(state.media, target, state.playing, titleForMedia(state.media))
+        val embeddedTitle = state.queueItem?.let { it.name.ifBlank { it.originalName() } }.orEmpty()
+        val retainedTitle = state.title.ifBlank { embeddedTitle }.ifBlank { titleForMedia(state.media) }
+        loadPartyMedia(state.media, target, state.playing, retainedTitle)
     }
 
     private fun applyRemoteCommand(command: PartyPlaybackCommand) {
         if (!playbackSync.acceptRemote(command.raw)) return
+        if (command.action in listOf("load", "play", "pause", "seek", "sync")) {
+            pendingRetainedThaw = false
+        }
         val player = mpvVideo
         when (command.action) {
             "load" -> command.media?.let {
@@ -2022,24 +2125,26 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
 
     private fun userPlayPlayback() {
         val media = currentMedia ?: return
+        pendingRetainedThaw = false
         desiredPlaying = true
         mpvVideo?.resume()
         val time = mpvVideo?.position() ?: 0.0
         val wp4 = playbackSync.localCommand()
         PartyTower.publishPlaybackCommand("play", time = time, user = true, wp4 = wp4)
-        PartyTower.publishPlaybackState(media, time, true)
+        publishPlaybackSnapshot(media, time, true, wp4.getJSONArray("epoch"))
         showPlayerActivity(WpUser.me(this), "play", "Resumed", clockForFeed(time))
         updatePlayerUi()
     }
 
     private fun userPausePlayback() {
         val media = currentMedia ?: return
+        pendingRetainedThaw = false
         desiredPlaying = false
         mpvVideo?.pause()
         val time = mpvVideo?.position() ?: 0.0
         val wp4 = playbackSync.localCommand()
         PartyTower.publishPlaybackCommand("pause", time = time, user = true, wp4 = wp4)
-        PartyTower.publishPlaybackState(media, time, false)
+        publishPlaybackSnapshot(media, time, false, wp4.getJSONArray("epoch"), clockRunning = false)
         showPlayerActivity(WpUser.me(this), "pause", "Paused", clockForFeed(time))
         updatePlayerUi()
     }
@@ -2047,11 +2152,14 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     private fun userSeekBy(delta: Double) = userSeekTo((mpvVideo?.position() ?: 0.0) + delta)
 
     private fun userSeekTo(value: Double) {
-        if (currentMedia == null) return
+        val media = currentMedia ?: return
+        pendingRetainedThaw = false
         val target = clampPlayerTime(value)
         mpvVideo?.seekTo(target)
         val wp4 = playbackSync.localCommand()
         PartyTower.publishPlaybackCommand("seek", time = target, user = true, wp4 = wp4)
+        publishPlaybackSnapshot(media, target, desiredPlaying, wp4.getJSONArray("epoch"),
+            clockRunning = desiredPlaying)
         showPlayerActivity(WpUser.me(this), "seek", "Seek", clockForFeed(target))
         updatePlayerUi()
     }
@@ -2104,6 +2212,12 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             player.buffering() -> player.cachePct().coerceIn(1, 100)
             else -> 0
         }
+        refreshPlaybackCheckpoint()
+        if (pendingRetainedThaw && loaded && desiredPlaying && PartyTower.isConnected()) {
+            // Empty Room ka clock load ke dauran frozen raha; first ready entrant ab usay chala raha hai.
+            pendingRetainedThaw = false
+            publishPlaybackSnapshot(media, player.rawPosition(), true, clockRunning = true)
+        }
         partyPlayer.render(true, currentMediaTitle, media.type, isPlaying, player.isMuted(),
             position, duration, isAudio, playerLoading, bufferingPercent,
             player.audioTracks().size, playerQuality)
@@ -2130,9 +2244,13 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         } else {
             partyQueueIndex = partyQueue.size
             PartyTower.publishQueue(partyQueue, partyQueueIndex)
-            currentMedia?.let { PartyTower.publishPlaybackState(it, mpvVideo?.duration() ?: 0.0, false) }
             desiredPlaying = false
+            pendingRetainedThaw = false
             mpvVideo?.pause()
+            currentMedia?.let {
+                publishPlaybackSnapshot(it, mpvVideo?.duration() ?: 0.0, false,
+                    clockRunning = false)
+            }
             Toast.makeText(this, "📋 Playlist khatam", Toast.LENGTH_SHORT).show()
         }
     }

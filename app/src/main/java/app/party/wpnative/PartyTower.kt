@@ -72,7 +72,19 @@ data class PartyPlaybackState(
     val media: PartyPlaybackMedia,
     val time: Double,
     val playing: Boolean,
-    val at: Long
+    /** Website-compatible running clock base. Frozen empty Rooms deliberately publish at=0. */
+    val at: Long,
+    val title: String = "",
+    val queueIndex: Int = -1,
+    val queueItem: PartyQueueItem? = null,
+    val clockRunning: Boolean = playing,
+    val frozen: Boolean = false,
+    val capturedAt: Long = at,
+    val revisionCounter: Long = -1L,
+    val revisionOwner: String = "",
+    val epochCounter: Long = -1L,
+    val epochOwner: String = "",
+    val updatedBy: String = ""
 )
 
 data class PartyPlaybackCommand(
@@ -138,7 +150,7 @@ interface PartyTowerListener {
  * - Room name se PBKDF2 + AES-GCM E2E, website ke envelope (`e2e/iv/ct`) jaisa.
  * - Chat ke retained native records late/rejoining active members ke liye; explicit Leave
  *   par us phone ka cursor aage chala jata hai. Aakhri member Leave kare to retained chat
- *   aur media blobs saaf, lekin retained playlist jaan-boojh kar save rehti hai.
+ *   aur media blobs saaf, lekin playlist aur exact frozen playback snapshot save rehte hain.
  * - Disconnect/glitch kabhi Leave publish nahi karta.
  */
 object PartyTower {
@@ -187,7 +199,11 @@ object PartyTower {
     private val reactions = HashMap<String, LinkedHashMap<String, LinkedHashSet<String>>>()
     private var queue = mutableListOf<PartyQueueItem>()
     private var queueIndex = -1
-    private var playbackState: PartyPlaybackState? = null
+    @Volatile private var playbackState: PartyPlaybackState? = null
+    @Volatile private var playbackCheckpoint: PartyPlaybackState? = null
+    private var lastPlaybackPayload = ""
+    private var stateRevisionCounter = 0L
+    private val playbackLock = Any()
     private val seenPlaybackCommands = LinkedHashSet<String>()
 
     private val presenceBeat = object : Runnable {
@@ -256,6 +272,7 @@ object PartyTower {
     }
 
     fun attach(target: PartyTowerListener) {
+        if (listener === target) return
         listener = target
         emitSnapshot()
     }
@@ -440,18 +457,120 @@ object PartyTower {
         return true
     }
 
-    /** Retained /state stays website-compatible so browser and native members can mix. */
-    fun publishPlaybackState(media: PartyPlaybackMedia, time: Double, playing: Boolean): Boolean {
+    /** Keep a fresh in-process native checkpoint for header Leave and Recents swipe-away. */
+    fun updatePlaybackCheckpoint(
+        media: PartyPlaybackMedia,
+        time: Double,
+        playing: Boolean,
+        title: String,
+        itemIndex: Int,
+        item: PartyQueueItem?,
+        epoch: JSONArray?
+    ) {
+        val now = System.currentTimeMillis()
+        val previous = playbackState
+        val parsedEpoch = epochParts(epoch)
+        playbackCheckpoint = PartyPlaybackState(
+            media = media,
+            time = time.takeIf { it.isFinite() && it >= 0 } ?: 0.0,
+            playing = playing,
+            at = now,
+            title = title.take(200),
+            queueIndex = itemIndex,
+            queueItem = item?.copy(),
+            clockRunning = playing,
+            frozen = false,
+            capturedAt = now,
+            revisionCounter = previous?.revisionCounter ?: -1L,
+            revisionOwner = previous?.revisionOwner.orEmpty(),
+            epochCounter = parsedEpoch.first.takeIf { it >= 0 } ?: previous?.epochCounter ?: -1L,
+            epochOwner = parsedEpoch.second.takeIf { parsedEpoch.first >= 0 } ?: previous?.epochOwner.orEmpty(),
+            updatedBy = memberId
+        )
+    }
+
+    /**
+     * Retained /state remains website-compatible, while v2 metadata makes Room restoration
+     * atomic for native clients. A frozen state keeps playing=true but at=0, so old website
+     * clients also resume at the exact Leave position instead of adding empty-Room time.
+     */
+    fun publishPlaybackState(
+        media: PartyPlaybackMedia,
+        time: Double,
+        playing: Boolean,
+        title: String = "",
+        itemIndex: Int = queueIndex,
+        item: PartyQueueItem? = queue.getOrNull(itemIndex),
+        clockRunning: Boolean = playing,
+        frozen: Boolean = false,
+        epoch: JSONArray? = null
+    ): Boolean {
         if (!connected) return false
-        val at = System.currentTimeMillis()
-        val body = media.toJson().apply {
-            put("time", time.takeIf { it.isFinite() && it >= 0 } ?: 0.0)
-            put("playing", playing); put("at", at)
+        val now = System.currentTimeMillis()
+        val revision = nextStateRevision()
+        val parsedEpoch = epochParts(epoch)
+        val state = PartyPlaybackState(
+            media = media,
+            time = time.takeIf { it.isFinite() && it >= 0 } ?: 0.0,
+            playing = playing,
+            at = if (frozen) 0L else now,
+            title = title.take(200),
+            queueIndex = itemIndex,
+            queueItem = item?.copy(),
+            clockRunning = clockRunning && playing && !frozen,
+            frozen = frozen,
+            capturedAt = now,
+            revisionCounter = revision.first,
+            revisionOwner = revision.second,
+            epochCounter = parsedEpoch.first,
+            epochOwner = parsedEpoch.second,
+            updatedBy = memberId
+        )
+        val body = playbackStateJson(state)
+        synchronized(playbackLock) {
+            playbackState = state
+            playbackCheckpoint = state
+            lastPlaybackPayload = body.toString()
         }
-        playbackState = PartyPlaybackState(media, body.optDouble("time"), playing, at)
         publish("$base/state", body.toString().toByteArray(StandardCharsets.UTF_8), true)
         return true
     }
+
+    private fun nextStateRevision(): Pair<Long, String> = synchronized(playbackLock) {
+        stateRevisionCounter += 1L
+        stateRevisionCounter to memberId
+    }
+
+    private fun epochParts(value: JSONArray?): Pair<Long, String> {
+        if (value == null || value.length() != 2) return -1L to ""
+        val counter = value.optLong(0, -1L)
+        val owner = value.optString(1)
+        return if (counter in 0 until 1_000_000_000_000L && owner.length <= 160) counter to owner
+        else -1L to ""
+    }
+
+    private fun playbackStateJson(state: PartyPlaybackState): JSONObject = state.media.toJson().apply {
+        put("stateVersion", 2)
+        put("time", state.time)
+        put("playing", state.playing)
+        put("at", state.at)
+        put("capturedAt", state.capturedAt)
+        put("clockRunning", state.clockRunning)
+        put("frozen", state.frozen)
+        put("title", state.title)
+        put("queueIndex", state.queueIndex)
+        state.queueItem?.let { put("queueItem", it.toJson()) }
+        if (state.revisionCounter >= 0) {
+            put("rev", JSONArray().put(state.revisionCounter).put(state.revisionOwner))
+        }
+        if (state.epochCounter >= 0) {
+            put("epoch", JSONArray().put(state.epochCounter).put(state.epochOwner))
+        }
+        put("updatedBy", state.updatedBy)
+    }
+
+    private fun compareVersion(aCounter: Long, aOwner: String, bCounter: Long, bOwner: String): Int =
+        if (aCounter != bCounter) aCounter.compareTo(bCounter) else aOwner.compareTo(bOwner)
 
     /** Explicit playback controls are transient. [_wp4] carries the no-host sync epoch. */
     fun publishPlaybackCommand(
@@ -512,7 +631,10 @@ object PartyTower {
                     // Kisi aur ka just-before-us explicit Leave callback process hone do;
                     // glitch member retained rahega, isliye usay ghalti se last nahi samjhenge.
                     try { Thread.sleep(350L) } catch (_: Throwable) {}
-                    if (members.keys.none { it != memberId }) clearRetainedChat()
+                    if (members.keys.none { it != memberId }) {
+                        freezeRetainedPlayback()
+                        clearRetainedChat()
+                    }
                 }
             } catch (_: Throwable) { }
             disconnectClient()
@@ -521,7 +643,39 @@ object PartyTower {
         }
     }
 
-    /** Aakhri explicit member: chat/media clean; playlist/queue ko bilkul nahi chherna. */
+    /** Final proper member freezes exact native time; the empty Room clock never keeps running. */
+    private fun freezeRetainedPlayback() {
+        val c = client ?: return
+        val source = playbackCheckpoint ?: playbackState ?: return
+        val now = System.currentTimeMillis()
+        val revision = nextStateRevision()
+        val index = source.queueIndex.takeIf { it >= 0 } ?: queueIndex
+        val item = source.queueItem?.copy() ?: queue.getOrNull(index)?.copy()
+        val frozenState = source.copy(
+            at = 0L,
+            title = source.title.take(200),
+            queueIndex = index,
+            queueItem = item,
+            clockRunning = false,
+            frozen = true,
+            capturedAt = now,
+            revisionCounter = revision.first,
+            revisionOwner = revision.second,
+            updatedBy = memberId
+        )
+        val body = playbackStateJson(frozenState)
+        synchronized(playbackLock) {
+            playbackState = frozenState
+            playbackCheckpoint = frozenState
+            lastPlaybackPayload = body.toString()
+        }
+        try {
+            c.publish("$base/state", body.toString().toByteArray(StandardCharsets.UTF_8), 1, true)
+                .waitForCompletion(8_000L)
+        } catch (_: Throwable) {}
+    }
+
+    /** Aakhri explicit member: retained chat/media clean; playback and queue survive. */
     private fun clearRetainedChat() {
         val c = client ?: return
         var last: IMqttDeliveryToken? = null
@@ -532,8 +686,6 @@ object PartyTower {
                 try { last = c.publish("$base/chat/blob/$blob", ByteArray(0), 1, true) } catch (_: Throwable) {}
             }
         }
-        // Playback media state is Room-ephemeral; retained playlist intentionally survives.
-        try { last = c.publish("$base/state", ByteArray(0), 1, true) } catch (_: Throwable) {}
         try { last?.waitForCompletion(8_000L) } catch (_: Throwable) {}
     }
 
@@ -689,14 +841,57 @@ object PartyTower {
     }
 
     private fun handlePlaybackState(payload: ByteArray) {
-        if (payload.isEmpty()) { playbackState = null; return }
-        val o = JSONObject(String(payload, StandardCharsets.UTF_8))
+        if (payload.isEmpty()) {
+            synchronized(playbackLock) {
+                playbackState = null; playbackCheckpoint = null; lastPlaybackPayload = ""
+            }
+            return
+        }
+        val raw = String(payload, StandardCharsets.UTF_8)
+        synchronized(playbackLock) { if (raw == lastPlaybackPayload) return }
+        val o = JSONObject(raw)
         val media = PartyPlaybackMedia.fromJson(o)
         if (media.type.isBlank() || media.type == "none") return
-        val state = PartyPlaybackState(media,
-            o.optDouble("time", 0.0).takeIf { it.isFinite() && it >= 0 } ?: 0.0,
-            o.optBoolean("playing"), o.optLong("at", System.currentTimeMillis()))
-        playbackState = state
+        val revision = epochParts(o.optJSONArray("rev"))
+        val commandEpoch = epochParts(o.optJSONArray("epoch"))
+        val playing = o.optBoolean("playing")
+        val frozen = o.optBoolean("frozen", false)
+        val wireAt = o.optLong("at", 0L).coerceAtLeast(0L)
+        val state = PartyPlaybackState(
+            media = media,
+            time = o.optDouble("time", 0.0).takeIf { it.isFinite() && it >= 0 } ?: 0.0,
+            playing = playing,
+            at = wireAt,
+            title = o.optString("title").take(200),
+            queueIndex = o.optInt("queueIndex", -1),
+            queueItem = o.optJSONObject("queueItem")?.let(PartyQueueItem::fromJson),
+            clockRunning = if (o.has("clockRunning")) o.optBoolean("clockRunning")
+                else playing && wireAt > 0L,
+            frozen = frozen,
+            capturedAt = o.optLong("capturedAt", wireAt).coerceAtLeast(0L),
+            revisionCounter = revision.first,
+            revisionOwner = revision.second,
+            epochCounter = commandEpoch.first,
+            epochOwner = commandEpoch.second,
+            updatedBy = o.optString("updatedBy")
+        )
+        val accepted = synchronized(playbackLock) {
+            val current = playbackState
+            if (revision.first >= 0) {
+                stateRevisionCounter = maxOf(stateRevisionCounter, revision.first)
+                if (current != null && current.revisionCounter >= 0 &&
+                    compareVersion(revision.first, revision.second,
+                        current.revisionCounter, current.revisionOwner) <= 0) {
+                    false
+                } else true
+            } else true
+        }
+        if (!accepted) return
+        synchronized(playbackLock) {
+            playbackState = state
+            playbackCheckpoint = state
+            lastPlaybackPayload = raw
+        }
         main.post { listener?.onPartyPlaybackState(state) }
     }
 
@@ -790,7 +985,10 @@ object PartyTower {
         members.clear(); typingUsers.clear(); lastTypingSentAt = 0L
         messages.clear(); messageJson.clear(); encryptedBlobs.clear()
         deliveredMedia.clear(); reactions.clear(); queue.clear(); queueIndex = -1
-        playbackState = null
+        synchronized(playbackLock) {
+            playbackState = null; playbackCheckpoint = null; lastPlaybackPayload = ""
+            stateRevisionCounter = 0L
+        }
         synchronized(seenPlaybackCommands) { seenPlaybackCommands.clear() }
     }
 
