@@ -81,13 +81,6 @@ jobs:
             strings | grep -F 'mpv v0.41.0-252-gc401ef9c3'
           unzip -p SmartPartyPlus-CI-Check.apk lib/arm64-v8a/libavcodec.so | \
             strings | grep -F 'FFmpeg version N-123143-g0540b42657'
-          cp "$SDK/lib/apksigner.jar" apksigner.jar
-          # Tiny self-contained runtime lets Arena sign locally without exposing the private
-          # key to Actions. jdeps keeps only modules apksigner actually needs.
-          JRE_MODULES=$("$JAVA_HOME/bin/jdeps" --ignore-missing-deps --print-module-deps apksigner.jar)
-          "$JAVA_HOME/bin/jlink" --add-modules "$JRE_MODULES" --strip-debug \
-            --no-man-pages --no-header-files --compress=2 --output /tmp/spp-signing-jre
-          tar -C /tmp/spp-signing-jre -czf signing-jre.tar.gz .
           sha256sum SmartPartyPlus-CI-Check.apk | tee CI-CHECK-SHA256SUMS.txt
 
       # Fail ho to poora Gradle log branch par daal do (artefact download
@@ -115,23 +108,8 @@ jobs:
             SmartPartyPlus-aligned-unsigned.apk
             SmartPartyPlus-CI-Check.apk
             CI-CHECK-SHA256SUMS.txt
-            apksigner.jar
-            signing-jre.tar.gz
             tests/mpv023/manifest.json
             tests/mpv023/README.md
-
-      # Artifact storage is not downloadable in every Arena network, so publish only the
-      # NON-SECRET aligned APK + apksigner tool on the tracked branch. Arena fetches these,
-      # signs with the permanent private key, verifies, then removes the temporary inputs.
-      - name: Publish non-secret signing input
-        if: github.event_name == 'push' && startsWith(github.ref_name, 'arena/')
-        run: |
-          set -euo pipefail
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@example.com"
-          git add -f SmartPartyPlus-aligned-unsigned.apk apksigner.jar signing-jre.tar.gz
-          git commit -m "Publish aligned signing input [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       # Final release is deliberately NOT auto-signed here. Arena signs the aligned input with
       # the permanent private release key and publishes WatchParty-FirstPage.apk. This prevents
