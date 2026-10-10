@@ -7,7 +7,6 @@ import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
-import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaRecorder
 import android.media.ToneGenerator
@@ -16,9 +15,11 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import com.google.firebase.firestore.ListenerRegistration
 import livekit.org.webrtc.AudioSource
 import livekit.org.webrtc.AudioTrack
+import livekit.org.webrtc.AudioTrackSink
 import livekit.org.webrtc.DataChannel
 import livekit.org.webrtc.IceCandidate
 import livekit.org.webrtc.MediaConstraints
@@ -31,7 +32,10 @@ import livekit.org.webrtc.SdpObserver
 import livekit.org.webrtc.SessionDescription
 import livekit.org.webrtc.audio.JavaAudioDeviceModule
 import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.Executors
+import kotlin.math.sqrt
 
 /** Pure-native, audio-only WebRTC call owner. Activities may disappear; this service stays. */
 class VoiceCallService : Service() {
@@ -79,7 +83,6 @@ class VoiceCallService : Service() {
     private val handled = LinkedHashSet<String>()
     private val queuedCandidates = ArrayList<IceCandidate>()
     private lateinit var audioManager: AudioManager
-    private var focusRequest: AudioFocusRequest? = null
     private var proximity: PowerManager.WakeLock? = null
     private var selectedRoute = AudioDeviceInfo.TYPE_UNKNOWN
     private var routeCallbackRegistered = false
@@ -102,6 +105,18 @@ class VoiceCallService : Service() {
     private var audioModule: JavaAudioDeviceModule? = null
     private var source: AudioSource? = null
     private var localTrack: AudioTrack? = null
+    private var remoteTrack: AudioTrack? = null
+    @Volatile private var lastVadDispatchAt = 0L
+    private var movieDucked = false
+    private var unduckTask: Runnable? = null
+    private val remoteSpeechSink = object : AudioTrackSink {
+        override fun onData(audioData: ByteBuffer, bitsPerSample: Int, sampleRate: Int,
+            numberOfChannels: Int, numberOfFrames: Int, absoluteCaptureTimestampMs: Long) {
+            if (bitsPerSample == 16 && pcmLevel(audioData, numberOfChannels * numberOfFrames) >= 0.014) {
+                speechDetected(local = false)
+            }
+        }
+    }
     private var peerConnection: PeerConnection? = null
     private var peerName = "Dost"
     private var peerCode = ""
@@ -111,8 +126,8 @@ class VoiceCallService : Service() {
     private var startedAt = 0L
     private var inviteSent = false
     private var lastIceRestartAt = 0L
-    private var ending = false
-    private var muted = false
+    @Volatile private var ending = false
+    @Volatile private var muted = false
     private var speaker = false
 
     override fun onCreate() {
@@ -228,6 +243,9 @@ class VoiceCallService : Service() {
         val module = JavaAudioDeviceModule.builder(applicationContext)
             .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
             .setAudioAttributes(attributes)
+            .setSamplesReadyCallback { samples ->
+                if (pcmLevel(samples.data) >= 0.028) speechDetected(local = true)
+            }
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
             .setUseStereoInput(false).setUseStereoOutput(false)
@@ -278,7 +296,13 @@ class VoiceCallService : Service() {
         override fun onRemoveStream(stream: MediaStream) = Unit
         override fun onDataChannel(channel: DataChannel) = Unit
         override fun onRenegotiationNeeded() = Unit
-        override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) = Unit
+        override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) {
+            val audio = receiver.track() as? AudioTrack ?: return
+            if (remoteTrack === audio) return
+            runCatching { remoteTrack?.removeSink(remoteSpeechSink) }
+            remoteTrack = audio
+            runCatching { audio.addSink(remoteSpeechSink) }
+        }
 
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) = Unit
 
@@ -396,6 +420,66 @@ class VoiceCallService : Service() {
         armTimeout(12_000L) { endLocal("failed", true) }
     }
 
+    /** RMS of signed little-endian PCM16, normalized to 0..1. */
+    private fun pcmLevel(data: ByteArray): Double {
+        var energy = 0L
+        var count = 0
+        var i = 0
+        // Every second sample is enough for speech VAD and halves audio-thread work.
+        while (i + 1 < data.size) {
+            val sample = ((data[i].toInt() and 0xff) or (data[i + 1].toInt() shl 8)).toShort().toInt()
+            energy += sample.toLong() * sample.toLong(); count++
+            i += 4
+        }
+        return if (count == 0) 0.0 else sqrt(energy.toDouble() / count) / 32768.0
+    }
+
+    private fun pcmLevel(data: ByteBuffer, samples: Int): Double {
+        val pcm = data.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        val count = minOf(samples.coerceAtLeast(0), pcm.remaining() / 2)
+        if (count <= 0) return 0.0
+        val start = pcm.position()
+        var energy = 0L
+        var measured = 0
+        var i = 0
+        while (i < count) {
+            val sample = pcm.getShort(start + i * 2).toInt()
+            energy += sample.toLong() * sample.toLong(); measured++
+            i += 2
+        }
+        return if (measured == 0) 0.0 else sqrt(energy.toDouble() / measured) / 32768.0
+    }
+
+    /**
+     * Both local microphone PCM and decoded remote PCM feed this VAD. Attack is immediate;
+     * a 720ms release hold prevents movie volume pumping between words and sentences.
+     */
+    private fun speechDetected(local: Boolean) {
+        if (ending || (local && muted) || CallState.current().phase != CallPhase.ACTIVE) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastVadDispatchAt < 80L) return
+        lastVadDispatchAt = now
+        main.post {
+            if (ending || CallState.current().phase != CallPhase.ACTIVE) return@post
+            if (!movieDucked) {
+                movieDucked = true
+                PartyRoomRoute.setCallSpeechDucking(true)
+            }
+            unduckTask?.let(main::removeCallbacks)
+            unduckTask = Runnable {
+                movieDucked = false
+                PartyRoomRoute.setCallSpeechDucking(false)
+                unduckTask = null
+            }.also { main.postDelayed(it, 720L) }
+        }
+    }
+
+    private fun clearSpeechDucking() {
+        unduckTask?.let(main::removeCallbacks); unduckTask = null
+        movieDucked = false
+        PartyRoomRoute.setCallSpeechDucking(false)
+    }
+
     private fun toggleMute() {
         if (!CallState.active()) return
         muted = !muted; rtc.execute { localTrack?.setEnabled(!muted) }
@@ -409,15 +493,10 @@ class VoiceCallService : Service() {
     }
 
     private fun configureCallAudio() {
-        PartyRoomRoute.suppressAudioForVoiceCall(true)
+        // Movie and call are intentionally mixed. Do not take exclusive audio focus: decoded
+        // local/remote speech drives precise MPV ducking instead of muting the whole movie.
+        clearSpeechDucking()
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        val attrs = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
-        if (Build.VERSION.SDK_INT >= 26) {
-            focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-                .setAudioAttributes(attrs).setOnAudioFocusChangeListener { }.build()
-            audioManager.requestAudioFocus(focusRequest!!)
-        }
         if (!routeCallbackRegistered) {
             runCatching { audioManager.registerAudioDeviceCallback(routeCallback, main) }
                 .onSuccess { routeCallbackRegistered = true }
@@ -518,8 +597,7 @@ class VoiceCallService : Service() {
 
     private fun endLocal(reason: String, notifyPeer: Boolean) {
         if (ending) return
-        ending = true; cancelTimeout(); stopRingback(); releaseProximity()
-        PartyRoomRoute.suppressAudioForVoiceCall(false)
+        ending = true; cancelTimeout(); stopRingback(); releaseProximity(); clearSpeechDucking()
         if (notifyPeer && callId.isNotBlank()) {
             val action = if (outgoing && startedAt == 0L) "cancel" else "hangup"
             CallSignaling.send(this, chatId, peerCode, callId, action)
@@ -543,7 +621,6 @@ class VoiceCallService : Service() {
         if (Build.VERSION.SDK_INT >= 31) runCatching { audioManager.clearCommunicationDevice() }
         @Suppress("DEPRECATION")
         runCatching { audioManager.isSpeakerphoneOn = false }
-        focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }; focusRequest = null
         audioManager.mode = AudioManager.MODE_NORMAL
         stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
         main.postDelayed({ if (CallState.current().callId == callId) CallState.clear() }, 1_800L)
@@ -572,6 +649,7 @@ class VoiceCallService : Service() {
 
     private fun releaseRtc() {
         queuedCandidates.clear()
+        runCatching { remoteTrack?.removeSink(remoteSpeechSink) }; remoteTrack = null
         runCatching { peerConnection?.close() }; runCatching { peerConnection?.dispose() }; peerConnection = null
         runCatching { localTrack?.dispose() }; localTrack = null
         runCatching { source?.dispose() }; source = null
@@ -582,7 +660,7 @@ class VoiceCallService : Service() {
     override fun onDestroy() {
         running = false
         if (!ending && callId.isNotBlank()) endLocal("ended", true)
-        signalReg?.remove(); releaseProximity(); stopRingback(); rtc.shutdown()
+        signalReg?.remove(); releaseProximity(); stopRingback(); clearSpeechDucking(); rtc.shutdown()
         super.onDestroy()
     }
 

@@ -14,6 +14,7 @@ Ab shamil hai:
 - Explicit Leave par us phone ki Room chat/media cache saaf; Room khaali hone ke baad bhi shared playback/media state retained rehti hai
 - `WP1-XXXX-XXXX` Friend Codes: own-code Copy/Share, lookup, requests, Accept/Reject aur stable code-backed DM chats
 - Accepted Friend Code contacts ke darmiyan pure-native private **1-to-1 voice calls**: WebRTC/Opus, STUN+TURN, encrypted idempotent signaling, incoming/ongoing call notifications, mute, earpiece/speaker/wired/Bluetooth routing, reconnect, timer aur minimize/restore
+- Conversation-aware movie audio: call ki khamoshi mein movie full audible; local ya remote member bolay to native PCM VAD movie ko smoothly 28% tak duck karta aur 720ms silence par full level restore karta hai—playback/Party sync kabhi pause nahi hoti
 - Earpiece par sirf connected state mein conditional proximity screen-off; ringing, connecting, reconnecting, speaker, wired aur Bluetooth par sensor hamesha off
 - Latest-100 durable Calls history, result/direction/duration, history callback aur DM call-summary rows; video aur group calling jaan-boojh kar shamil nahi
 - Native YouTube Search: Piped multi-instance primary, YouTube Data API fallback, recent/suggestions, thumbnails/duration

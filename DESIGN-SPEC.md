@@ -106,6 +106,7 @@ base color: #05030d
 - Background: `#170d35 → #0b1027 → #03040b`; center avatar ke gird cyan/purple pulse rings aur voice bars.
 - Incoming controls: Decline red + Answer green. Connecting/outgoing: End. Active/reconnecting: Mute, End, Speaker/Earpiece.
 - Top `⌄` Activity ko minimize karta hai; foreground service/WebRTC call jari rehti aur baqi app screens par 62dp mini bar restore/controls deti hai.
+- Movie call ke dauran audible rehti hai: local/remote PCM speech detection par 28% tak smooth duck, 720ms silence ke baad smooth 100% restore; koi Party pause/seek nahi.
 - Calls page real latest-100 history se direction, missed/result, date/time/duration dikhata hai aur phone button callback karta hai.
 - Connected built-in earpiece par hi proximity screen-off; ringing/connecting/reconnecting/speaker/wired/Bluetooth par off.
 

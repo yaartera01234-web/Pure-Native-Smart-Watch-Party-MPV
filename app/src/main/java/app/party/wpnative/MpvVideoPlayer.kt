@@ -41,6 +41,9 @@ class MpvVideoPlayer(private val act: Activity, root: FrameLayout) {
     @Volatile private var coreReady = false
     @Volatile private var ensuring = false
     @Volatile private var localError: String? = null
+    @Volatile private var desiredVolume = 100
+    private var appliedVolume = 100
+    private var volumeGeneration = 0
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
 
@@ -91,6 +94,8 @@ class MpvVideoPlayer(private val act: Activity, root: FrameLayout) {
                             try {
                                 v.attach(prepared)
                                 coreReady = true
+                                appliedVolume = desiredVolume
+                                runCatching { v.mpv?.command("set", "volume", desiredVolume.toString()) }
                                 localError = null
                                 val callbacks = synchronized(readyCallbacks) {
                                     readyCallbacks.toList().also { readyCallbacks.clear() }
@@ -179,6 +184,26 @@ class MpvVideoPlayer(private val act: Activity, root: FrameLayout) {
     fun resume() { main.post { try { view?.paused = false } catch (t: Throwable) {} } }
     fun seekTo(pos: Double) { main.post { try { view?.timePos = pos; dispPos = pos } catch (t: Throwable) {} } }
     fun setMuted(m: Boolean) { main.post { try { view?.muted = m } catch (t: Throwable) {} } }
+
+    /** Device-local movie ducking. It never changes Party playback state or publishes commands. */
+    fun fadeVolume(percent: Int, durationMs: Long) {
+        val target = percent.coerceIn(0, 100)
+        desiredVolume = target
+        main.post {
+            val generation = ++volumeGeneration
+            val from = appliedVolume
+            val steps = (durationMs / 30L).toInt().coerceIn(1, 16)
+            repeat(steps) { index ->
+                main.postDelayed({
+                    if (generation == volumeGeneration) {
+                        val fraction = (index + 1).toFloat() / steps.toFloat()
+                        appliedVolume = (from + (target - from) * fraction).toInt().coerceIn(0, 100)
+                        runCatching { view?.mpv?.command("set", "volume", appliedVolume.toString()) }
+                    }
+                }, durationMs * (index + 1L) / steps)
+            }
+        }
+    }
 
     /* MPV ka time-pos kabhi kabhi +-0.25s peeche jump karta hai (A/V sync jitter) — display par
        time line hilti rehti. Is liye display position smooth ki jati hai: aage sirf asli barhaat,
@@ -322,6 +347,7 @@ class MpvVideoPlayer(private val act: Activity, root: FrameLayout) {
             try { val v = view; if (v != null && v.parent === root) root.removeView(v) } catch (t: Throwable) {}
             try { masks?.forEach { m -> root.removeView(m) } } catch (t: Throwable) {}
             masks = null
+            volumeGeneration++
             synchronized(readyCallbacks) { readyCallbacks.clear() }
             view = null; coreReady = false; ensuring = false
             io.shutdownNow()

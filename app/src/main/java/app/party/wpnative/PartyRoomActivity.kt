@@ -61,6 +61,7 @@ import kotlin.math.roundToInt
  */
 object PartyRoomRoute {
     private var live: WeakReference<PartyRoomActivity>? = null
+    @Volatile private var callSpeechDucking = false
 
     fun attach(room: PartyRoomActivity) { live = WeakReference(room) }
     fun detach(room: PartyRoomActivity) {
@@ -76,11 +77,17 @@ object PartyRoomRoute {
         return true
     }
 
-    /** Locally silence MPV while WebRTC owns call audio; never publishes Party commands. */
-    fun suppressAudioForVoiceCall(suppress: Boolean) {
+    /**
+     * WebRTC VAD drives local movie ducking only while either caller is speaking.
+     * Playback/sync are untouched and no Party command is published.
+     */
+    fun setCallSpeechDucking(duck: Boolean) {
+        callSpeechDucking = duck
         val room = live?.get() ?: return
-        room.runOnUiThread { room.setVoiceCallAudioSuppressed(suppress) }
+        room.runOnUiThread { room.setVoiceCallSpeechDucking(duck) }
     }
+
+    fun isCallSpeechDucking(): Boolean = callSpeechDucking
 }
 
 /**
@@ -148,8 +155,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     // ------------------------------------------------ native MPV / Rave player
     private lateinit var partyPlayer: PartyPlayerView
     private var mpvVideo: MpvVideoPlayer? = null
-    private var voiceCallAudioSuppressed = false
-    private var movieMutedBeforeVoiceCall = false
+    private var voiceCallSpeechDucked = false
     private var currentMedia: PartyPlaybackMedia? = null
     private var currentMediaTitle = ""
     private var desiredPlaying = false
@@ -288,9 +294,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
         window.decorView.animate().cancel()
         window.decorView.alpha = 1f
         if (::roomBackdrop.isInitialized) roomBackdrop.restoreColors()
-        val callPhase = CallState.current().phase
-        setVoiceCallAudioSuppressed(callPhase == CallPhase.CONNECTING ||
-            callPhase == CallPhase.ACTIVE || callPhase == CallPhase.RECONNECTING)
+        setVoiceCallSpeechDucking(PartyRoomRoute.isCallSpeechDucking())
         CallMiniBar.attach(this)
     }
 
@@ -1798,11 +1802,7 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
             override fun onSeekTo(seconds: Double) = userSeekTo(seconds)
             override fun onSeekBy(seconds: Double) = userSeekBy(seconds)
             override fun onToggleMute() {
-                if (voiceCallAudioSuppressed) {
-                    player.setMuted(true)
-                    Toast.makeText(this@PartyRoomActivity, "Voice call ke dauran movie audio muted rahegi",
-                        Toast.LENGTH_SHORT).show()
-                } else player.setMuted(!player.isMuted())
+                player.setMuted(!player.isMuted())
                 updatePlayerUi()
             }
             override fun onFullscreen() = enterPlayerFullscreen()
@@ -2122,19 +2122,14 @@ class PartyRoomActivity : Activity(), ChatHost, PartyTowerListener {
     }
 
     /**
-     * Call audio and movie audio must not compete. Muting is deliberately local: playback,
-     * retained timeline and sync continue, and no Party pause/seek packet is ever emitted.
+     * Conversation-aware ducking: movie stays audible at full level in call silence, fades to
+     * 28% while either caller speaks, then smoothly returns. It never pauses/seeks or publishes.
      */
-    internal fun setVoiceCallAudioSuppressed(suppress: Boolean) {
+    internal fun setVoiceCallSpeechDucking(duck: Boolean) {
         val player = mpvVideo ?: return
-        if (suppress) {
-            if (!voiceCallAudioSuppressed) movieMutedBeforeVoiceCall = player.isMuted()
-            voiceCallAudioSuppressed = true
-            player.setMuted(true)
-        } else if (voiceCallAudioSuppressed) {
-            voiceCallAudioSuppressed = false
-            player.setMuted(movieMutedBeforeVoiceCall)
-        }
+        if (voiceCallSpeechDucked == duck) return
+        voiceCallSpeechDucked = duck
+        if (duck) player.fadeVolume(28, 150L) else player.fadeVolume(100, 380L)
     }
 
     private fun userPlayPlayback() {
