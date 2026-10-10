@@ -888,7 +888,10 @@ class ChatActivity : Activity(), ChatHost {
 
     /** Sirf foreground mein waqai nazar aaye peer messages server par read hote hain. */
     private fun markVisibleMessagesRead(server: List<ChatMsg>? = null) {
-        if (!chatVisible || !FirebaseChat.isReady(this)) return
+        if (!chatVisible) return
+        val newest = server?.maxOfOrNull { it.ts } ?: newestTs()
+        DmInboxStore.markRead(this, chatId, newest)
+        if (!FirebaseChat.isReady(this)) return
         val ids = if (server != null) {
             server.asSequence()
                 .filter { !it.deleted && !it.read && it.from != me && it.type != "call_signal" }

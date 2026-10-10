@@ -60,6 +60,8 @@ fun buildBottomNav(act: Activity, active: String): View {
 
     val row = LinearLayout(act).apply {
         orientation = LinearLayout.HORIZONTAL
+        clipChildren = false
+        clipToPadding = false
         setPadding(dp(5), dp(5), dp(5), dp(5))
     }
     val partyDot = View(act).apply {
@@ -77,6 +79,8 @@ fun buildBottomNav(act: Activity, active: String): View {
         val tabView = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
+            clipChildren = false
+            clipToPadding = false
             setPadding(dp(2), dp(8), dp(2), dp(6))
             if (on) {
                 background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
@@ -103,9 +107,53 @@ fun buildBottomNav(act: Activity, active: String): View {
             }
         }
         val iconBox = FrameLayout(act)
+        iconBox.clipChildren = false
+        iconBox.clipToPadding = false
         iconBox.addView(NavIcon(act, icon, on), FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
         if (dot != null) iconBox.addView(dot, FrameLayout.LayoutParams(dp(7), dp(7), Gravity.END or Gravity.TOP))
-        tabView.addView(iconBox, LinearLayout.LayoutParams(dp(24), dp(24)))
+        if (key == "chat") {
+            // Original mobile-dm-count: aggregate number; sirf display 9+ par cap hota hai.
+            val unreadBadge = TextView(act).apply {
+                textSize = 9f
+                gravity = Gravity.CENTER
+                minWidth = dp(18)
+                minHeight = dp(18)
+                setPadding(dp(4), 0, dp(4), 0)
+                setTextColor(Color.WHITE)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    intArrayOf(Color.parseColor("#ff5ebc"), Color.parseColor("#8b72ff"))).apply {
+                    cornerRadius = dp(9).toFloat()
+                    setStroke(dp(1), Color.argb(90, 255, 255, 255))
+                }
+                elevation = dp(4).toFloat()
+            }
+            iconBox.addView(unreadBadge, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(18), Gravity.END or Gravity.TOP
+            ).apply { topMargin = -dp(7); rightMargin = -dp(8) })
+            val refreshUnread: () -> Unit = {
+                val count = DmInboxStore.total(act)
+                unreadBadge.visibility = if (count > 0) View.VISIBLE else View.GONE
+                unreadBadge.text = if (count > 9) "9+" else count.toString()
+            }
+            var observing = false
+            iconBox.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) {
+                    if (!observing) {
+                        observing = true
+                        DmInboxStore.observe(refreshUnread)
+                    }
+                }
+                override fun onViewDetachedFromWindow(v: View) {
+                    if (observing) {
+                        observing = false
+                        DmInboxStore.removeObserver(refreshUnread)
+                    }
+                }
+            })
+            refreshUnread()
+        }
+        tabView.addView(iconBox, LinearLayout.LayoutParams(dp(30), dp(24)))
         tabView.addView(TextView(act).apply {
             text = label
             textSize = 10f

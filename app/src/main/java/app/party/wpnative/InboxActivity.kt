@@ -33,11 +33,15 @@ class InboxActivity : Activity() {
         val last: String,
         val time: String,
         val online: Boolean,
-        val unread: Boolean,
+        val unreadCount: Int,
         val color: Int,
         val pinned: Boolean = false,
-        val code: String = ""
-    )
+        val code: String = "",
+        val lastTs: Long = 0L,
+        val outgoing: Boolean = false
+    ) {
+        val unread: Boolean get() = unreadCount > 0
+    }
 
     /** Rows sirf asli add kiye hue doston ke liye; test Dost 1..4 hata diye. */
     private val chats = mutableListOf<Friend>()
@@ -45,6 +49,9 @@ class InboxActivity : Activity() {
     private var requestListener: ListenerRegistration? = null
     private var searchQuery = ""
     private val avatarLookups = HashSet<String>()
+    private val inboxObserver: () -> Unit = {
+        if (!isFinishing && ::listBox.isInitialized) fillInbox()
+    }
 
     private lateinit var listBox: LinearLayout
 
@@ -57,15 +64,18 @@ class InboxActivity : Activity() {
         askNotifyPermission()
         BgMsgService.start(this)      // app band hone pe bhi notification
         setContentView(buildScreen())
+        DmInboxStore.observe(inboxObserver)
         FirebaseChat.publishFriendProfile(this)
         requestListener = FirebaseChat.listenFriendRequests(this) { list ->
             incomingRequests.clear()
             incomingRequests.addAll(list.filterNot { Friends.hasCode(this, it.code) })
+            DmInboxStore.setRequestCount(this, incomingRequests.size)
             if (::listBox.isInitialized) fillInbox()
         }
     }
 
     override fun onDestroy() {
+        DmInboxStore.removeObserver(inboxObserver)
         requestListener?.remove()
         requestListener = null
         super.onDestroy()
@@ -108,7 +118,7 @@ class InboxActivity : Activity() {
     private fun listSignature(): String =
         Friends.entries(this).joinToString(",") { "${it.code}:${it.name}" } + "#" +
             incomingRequests.joinToString(",") { "${it.code}:${it.ts}" } + "#" +
-            chats.joinToString(",") { "${it.name}:${it.pinned}:${it.last}:${it.unread}" }
+            chats.joinToString(",") { "${it.name}:${it.pinned}:${it.last}:${it.unreadCount}:${it.lastTs}" }
 
     private fun buildScreen(): View {
         val root = FrameLayout(this)
@@ -219,10 +229,13 @@ class InboxActivity : Activity() {
                 16, 1
             )
             setOnClickListener {
+                val chatId = WpUser.friendChatId(this@InboxActivity, f.name, f.code)
+                DmInboxStore.markRead(this@InboxActivity, chatId, f.lastTs)
+                WpNotify.cancel(this@InboxActivity, chatId)
                 startActivity(Intent(this@InboxActivity, ChatActivity::class.java)
                     .putExtra("name", f.name)
                     .putExtra("friendCode", f.code)
-                    .putExtra("chatId", WpUser.friendChatId(this@InboxActivity, f.name, f.code)))
+                    .putExtra("chatId", chatId))
             }
         }
 
@@ -253,7 +266,7 @@ class InboxActivity : Activity() {
             setSingleLine(true)
         })
         if (f.last.isNotBlank()) info.addView(TextView(this).apply {
-            text = f.last
+            text = (if (f.outgoing) "✓  " else "") + f.last
             textSize = 12f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(Color.WHITE)
@@ -267,20 +280,34 @@ class InboxActivity : Activity() {
         }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5) })
         row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12) })
 
-        // Time + lock
+        // Original meta3: time/day + unread number; read ho to lock.
         val meta = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.END
         }
         if (f.time.isNotBlank()) meta.addView(TextView(this).apply {
             text = f.time
-            textSize = 11f
-            setTextColor(Color.argb(102, 255, 255, 255))
+            textSize = 9.5f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(if (f.unread) hex("#8ce8ff") else hex("#9e97c4"))
         })
         meta.addView(TextView(this).apply {
-            text = "🔒"
-            textSize = 13f
-        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5) })
+            text = if (f.unread) f.unreadCount.toString() else "🔒"
+            textSize = if (f.unread) 10.5f else 11f
+            gravity = Gravity.CENTER
+            if (f.unread) {
+                minWidth = dp(20)
+                minHeight = dp(20)
+                setPadding(dp(6), 0, dp(6), 0)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(Color.WHITE)
+                background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    intArrayOf(hex("#ff5ebc"), hex("#8b72ff"))).apply {
+                    cornerRadius = dp(10).toFloat()
+                    setStroke(dp(1), Color.argb(56, 255, 255, 255))
+                }
+            } else alpha = .55f
+        }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(20)).apply { topMargin = dp(5) })
         row.addView(meta, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         return row.also {
@@ -682,7 +709,7 @@ class InboxActivity : Activity() {
         val accepted = visibleChats().filter {
             q.isBlank() || it.name.lowercase().contains(q) ||
                 (qCode.length >= 3 && it.code.lowercase().contains(qCode))
-        }.sortedByDescending { it.pinned }
+        }.sortedWith(compareByDescending<Friend> { it.pinned }.thenByDescending { it.lastTs })
         accepted.forEach { listBox.addView(buildRow(it)) }
         if (accepted.isEmpty()) {
             listBox.addView(TextView(this).apply {
@@ -744,6 +771,7 @@ class InboxActivity : Activity() {
         accept.setOnClickListener { acceptRequest(req) }
         reject.setOnClickListener {
             incomingRequests.removeAll { it.code == req.code }
+            DmInboxStore.setRequestCount(this, incomingRequests.size)
             FirebaseChat.removeFriendRequest(this, req.code)
             fillInbox()
             Toast.makeText(this, "Request hata di", Toast.LENGTH_SHORT).show()
@@ -758,6 +786,7 @@ class InboxActivity : Activity() {
     private fun acceptRequest(req: FriendRequest) {
         Friends.add(this, req.name, req.code)
         incomingRequests.removeAll { it.code == req.code }
+        DmInboxStore.setRequestCount(this, incomingRequests.size)
         FirebaseChat.removeFriendRequest(this, req.code)
         val chatId = WpUser.friendChatId(this, req.name, req.code)
         val accepted = "✅ ${WpUser.me(this)} ne tumhari request accept kar li — ab baat kar sakte ho!"
@@ -776,12 +805,43 @@ class InboxActivity : Activity() {
     private fun visibleChats(): List<Friend> {
         val entries = Friends.entries(this)
         entries.forEach { e ->
+            val chatId = WpUser.friendChatId(this, e.name, e.code)
+            val state = DmInboxStore.get(this, chatId)
             val i = chats.indexOfFirst { it.name.equals(e.name, ignoreCase = true) }
-            if (i < 0) chats.add(Friend(e.name, "", "", false, false, colorFor(e.name), code = e.code))
-            else if (chats[i].code != e.code) chats[i] = chats[i].copy(code = e.code)
+            if (i < 0) {
+                chats.add(Friend(e.name, state.preview, inboxDayLabel(state.lastTs), false,
+                    state.unread, colorFor(e.name), code = e.code, lastTs = state.lastTs,
+                    outgoing = state.outgoing))
+            } else {
+                chats[i] = chats[i].copy(
+                    code = e.code,
+                    last = state.preview,
+                    time = inboxDayLabel(state.lastTs),
+                    unreadCount = state.unread,
+                    lastTs = state.lastTs,
+                    outgoing = state.outgoing
+                )
+            }
         }
         chats.removeAll { chat -> entries.none { it.name.equals(chat.name, ignoreCase = true) } }
         return chats.toList()
+    }
+
+    /** Original dayLabel: aaj time, kal `Kal`, warna dd/MM. */
+    private fun inboxDayLabel(ts: Long): String {
+        if (ts <= 0L) return ""
+        val now = java.util.Calendar.getInstance()
+        val day = java.util.Calendar.getInstance().apply { timeInMillis = ts }
+        if (day.get(java.util.Calendar.YEAR) == now.get(java.util.Calendar.YEAR) &&
+            day.get(java.util.Calendar.DAY_OF_YEAR) == now.get(java.util.Calendar.DAY_OF_YEAR)) {
+            return java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+                .format(java.util.Date(ts))
+        }
+        now.add(java.util.Calendar.DAY_OF_YEAR, -1)
+        if (day.get(java.util.Calendar.YEAR) == now.get(java.util.Calendar.YEAR) &&
+            day.get(java.util.Calendar.DAY_OF_YEAR) == now.get(java.util.Calendar.DAY_OF_YEAR)) return "Kal"
+        return java.text.SimpleDateFormat("dd/MM", java.util.Locale.getDefault())
+            .format(java.util.Date(ts))
     }
 
     private fun colorFor(name: String): Int {
@@ -826,7 +886,11 @@ class InboxActivity : Activity() {
 
     private fun clearChat(name: String) {
         val i = chats.indexOfFirst { it.name == name }
-        if (i >= 0) chats[i] = chats[i].copy(last = "Chat khali", unread = false)
+        if (i >= 0) {
+            val f = chats[i]
+            DmInboxStore.markRead(this, WpUser.friendChatId(this, f.name, f.code), f.lastTs)
+            chats[i] = f.copy(last = "Chat khali", unreadCount = 0)
+        }
         fillInbox()
         Toast.makeText(this, "Chat clear ho gayi", Toast.LENGTH_SHORT).show()
     }

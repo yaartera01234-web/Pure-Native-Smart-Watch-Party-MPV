@@ -261,6 +261,26 @@ object FirebaseChat {
         } catch (t: Throwable) { null }
     }
 
+    /** Inbox row ke liye latest preview + exact unread count (retained native limit 120). */
+    fun listenInboxSummary(
+        ctx: Context,
+        chatId: String,
+        onMessages: (List<ChatMsg>) -> Unit
+    ): ListenerRegistration? {
+        if (!isReady(ctx)) return null
+        return try {
+            msgs(ctx, chatId)
+                .orderBy("ts", Query.Direction.DESCENDING)
+                .limit(MSG_KEEP.toLong())
+                .addSnapshotListener { snap, _ ->
+                    if (snap == null) return@addSnapshotListener
+                    onMessages(snap.documents.mapNotNull { d ->
+                        d.data?.takeIf(::visibleMessage)?.let { ChatMsg.fromMap(d.id, it) }
+                    })
+                }
+        } catch (_: Throwable) { null }
+    }
+
     /**
      * Message mitao — **sabke phone se** (sirf apni screen se nahi).
      *

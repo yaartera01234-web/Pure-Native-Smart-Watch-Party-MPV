@@ -42,6 +42,7 @@ class BgMsgService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val regs = HashMap<String, ListenerRegistration>()
     private val callRegs = HashMap<String, ListenerRegistration>()
+    private var requestReg: ListenerRegistration? = null
     private val lastTs = HashMap<String, Long>()     // chatId -> sabse naya ts jo dekh liya
     private var notePosted = false
 
@@ -77,17 +78,26 @@ class BgMsgService : Service() {
         if (!FirebaseChat.isReady(this)) return
         val me = WpUser.me(this)
         val peers = Friends.entries(this).filter { it.name != me }
+        if (requestReg == null) {
+            requestReg = FirebaseChat.listenFriendRequests(this) { requests ->
+                DmInboxStore.setRequestCount(this,
+                    requests.count { !Friends.hasCode(this, it.code) })
+            }
+        }
         for (p in peers) {
             val chatId = WpUser.friendChatId(this, p.name, p.code)
             if (!regs.containsKey(chatId)) try {
-                val r = FirebaseChat.listenLast(this, chatId) { m ->
+                val r = FirebaseChat.listenInboxSummary(this, chatId) { rows ->
+                    // Original `un` + `lrt`: row preview, per-chat number aur global badge.
+                    DmInboxStore.applySnapshot(this, chatId, rows, me)
+                    val m = rows.asSequence().filterNot { it.deleted }.maxByOrNull { it.ts }
+                        ?: return@listenInboxSummary
                     val prev = lastTs[chatId]
                     lastTs[chatId] = Math.max(prev ?: 0L, m.ts)
-                    /* pehli snapshot sirf "baseline" hai — uspe notification nahi
-                       (warna app kholte hi purane messages ki notification aa jayegi) */
-                    if (prev == null) return@listenLast
-                    if (m.ts <= prev) return@listenLast        // purana / duplicate
-                    if (m.from == me) return@listenLast        // apna hi bheja hua
+                    /* pehli snapshot sirf baseline hai — purani notification dobara nahi. */
+                    if (prev == null) return@listenInboxSummary
+                    if (m.ts <= prev) return@listenInboxSummary
+                    if (m.from == me || m.type == "call") return@listenInboxSummary
                     WpNotify.post(this, p.name, m.text, chatId, p.code)
                 }
                 if (r != null) regs[chatId] = r
@@ -116,6 +126,7 @@ class BgMsgService : Service() {
                 try { e.value.remove() } catch (t: Throwable) { }
                 it.remove()
                 lastTs.remove(e.key)
+                DmInboxStore.forget(this, e.key)
             }
         }
         val callIt = callRegs.entries.iterator()
@@ -171,6 +182,8 @@ class BgMsgService : Service() {
         try { handler.removeCallbacksAndMessages(null) } catch (t: Throwable) { }
         for (r in regs.values) { try { r.remove() } catch (t: Throwable) { } }
         for (r in callRegs.values) { try { r.remove() } catch (_: Throwable) { } }
+        try { requestReg?.remove() } catch (_: Throwable) { }
+        requestReg = null
         regs.clear(); callRegs.clear()
         super.onDestroy()
     }

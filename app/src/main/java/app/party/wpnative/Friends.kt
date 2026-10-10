@@ -79,6 +79,8 @@ object Friends {
             val stableId = WpUser.friendChatId(ctx, name, friendCode)
             ctx.getSharedPreferences("wp_chat_cache", Context.MODE_PRIVATE).edit()
                 .remove(legacyId).remove(stableId).apply()
+            DmInboxStore.forget(ctx, legacyId)
+            DmInboxStore.forget(ctx, stableId)
         } catch (_: Throwable) { }
     }
 
