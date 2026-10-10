@@ -1,2 +1,2 @@
-58b8a99afa1da8298e71071475f03fc82c0998a99191ed4a31c98538154463cb  WatchParty-FirstPage.apk
+9fbab4503eeecae50016e5caf083a4350a954f7a8b010aafb547e3e8e2fbe210  WatchParty-FirstPage.apk
 8e2aa3f26f423fcee2d1d8e8d661aeff95204298852cebd01c6eb4af894b1be8  WatchParty-Native-FirstPage.zip
