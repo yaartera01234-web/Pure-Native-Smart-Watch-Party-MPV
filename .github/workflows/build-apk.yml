@@ -113,6 +113,19 @@ jobs:
             tests/mpv023/manifest.json
             tests/mpv023/README.md
 
-      # Final release is deliberately NOT auto-signed or auto-published here. Arena signs the
-      # aligned input with the permanent private release key, verifies it, and then publishes
-      # WatchParty-FirstPage.apk. This prevents accidental future signature changes.
+      # Artifact storage is not downloadable in every Arena network, so publish only the
+      # NON-SECRET aligned APK + apksigner tool on the tracked branch. Arena fetches these,
+      # signs with the permanent private key, verifies, then removes the temporary inputs.
+      - name: Publish non-secret signing input
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'arena/')
+        run: |
+          set -euo pipefail
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@example.com"
+          git add -f SmartPartyPlus-aligned-unsigned.apk apksigner.jar
+          git commit -m "Publish aligned signing input [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      # Final release is deliberately NOT auto-signed here. Arena signs the aligned input with
+      # the permanent private release key and publishes WatchParty-FirstPage.apk. This prevents
+      # accidental future signature changes; private signing material never enters GitHub.
